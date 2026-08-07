@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SnipClip",
+  "version": "0.1.0",
+  "identifier": "com.ander.snipclip",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "SnipClip",
+        "width": 960,
+        "height": 660,
+        "minWidth": 720,
+        "minHeight": 480,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true,
+        "center": true,
+        "resizable": true,
+        "visible": true,
+        "backgroundColor": "#202020"
+      },
+      {
+        "label": "snipper",
+        "title": "SnipClip Snipper",
+        "url": "index.html?mode=snip",
+        "width": 800,
+        "height": 600,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "fullscreen": true,
+        "focus": false,
+        "backgroundColor": "#00000000"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {}
+}

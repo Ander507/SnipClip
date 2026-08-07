@@ -1,0 +1,107 @@
+import clsx from "clsx";
+import {
+  LayoutGrid,
+  Type,
+  Image as ImageIcon,
+  Link2,
+  Pin,
+  Trash2,
+  Camera,
+  Settings,
+} from "lucide-react";
+import type { Category } from "../lib/types";
+
+const NAV: { id: Category; label: string; icon: typeof LayoutGrid }[] = [
+  { id: "all", label: "All", icon: LayoutGrid },
+  { id: "text", label: "Text", icon: Type },
+  { id: "images", label: "Images", icon: ImageIcon },
+  { id: "links", label: "Links", icon: Link2 },
+  { id: "pinned", label: "Pinned", icon: Pin },
+];
+
+interface Props {
+  category: Category;
+  onCategory: (c: Category) => void;
+  onSnip: () => void;
+  onClear: () => void;
+  onSettings: () => void;
+  settingsOpen: boolean;
+  count: number;
+  snipHotkeyLabel: string;
+}
+
+export function Sidebar({
+  category,
+  onCategory,
+  onSnip,
+  onClear,
+  onSettings,
+  settingsOpen,
+  count,
+  snipHotkeyLabel,
+}: Props) {
+  return (
+    <aside className="flex w-52 shrink-0 flex-col justify-between border-r border-[#2d2d2d] bg-[#191919] p-3">
+      <nav className="flex flex-col gap-0.5">
+        <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
+          Library
+        </p>
+        {NAV.map(({ id, label, icon: Icon }) => {
+          const active = !settingsOpen && category === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onCategory(id)}
+              className={clsx(
+                "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] transition",
+                active
+                  ? "bg-[#2d2d2d] text-white"
+                  : "text-[#aaaaaa] hover:bg-[#252525] hover:text-white"
+              )}
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="space-y-0.5 border-t border-[#2d2d2d] pt-3">
+        <button
+          type="button"
+          onClick={onSnip}
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-[#aaaaaa] transition hover:bg-[#252525] hover:text-white"
+        >
+          <Camera size={15} />
+          <span>Snip</span>
+          <kbd className="ml-auto rounded bg-[#2d2d2d] px-1.5 py-0.5 text-[9px] text-[#888888]">
+            {snipHotkeyLabel}
+          </kbd>
+        </button>
+        <button
+          type="button"
+          onClick={onSettings}
+          className={clsx(
+            "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition",
+            settingsOpen
+              ? "bg-[#2d2d2d] text-white"
+              : "text-[#aaaaaa] hover:bg-[#252525] hover:text-white"
+          )}
+        >
+          <Settings size={15} />
+          <span>Settings</span>
+        </button>
+        <button
+          type="button"
+          onClick={onClear}
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-[#aaaaaa] transition hover:bg-[#252525] hover:text-[#ff6b6b]"
+        >
+          <Trash2 size={15} />
+          <span>Clear history</span>
+        </button>
+        <p className="px-2.5 pt-2 text-[11px] text-[#666666]">{count} items</p>
+      </div>
+    </aside>
+  );
+}
