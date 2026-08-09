@@ -5,6 +5,7 @@ import {
   Highlighter,
   Pen,
   Square,
+  Circle,
   Droplets,
   Hash,
   Copy,
@@ -14,6 +15,8 @@ import {
   Pipette,
   Minus,
   Plus,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { AnnotateTool, CaptureResult } from "../lib/types";
@@ -49,6 +52,7 @@ const TOOLS: { id: AnnotateTool; icon: typeof Pen; label: string }[] = [
   { id: "pen", icon: Pen, label: "Pen" },
   { id: "arrow", icon: ArrowUpRight, label: "Arrow" },
   { id: "rect", icon: Square, label: "Rectangle" },
+  { id: "circle", icon: Circle, label: "Circle" },
   { id: "highlight", icon: Highlighter, label: "Highlight" },
   { id: "blur", icon: Droplets, label: "Blur" },
   { id: "number", icon: Hash, label: "Callout" },
@@ -174,7 +178,51 @@ function drawBlurRegion(
   ctx.restore();
 }
 
-const SHAPE_TOOLS: AnnotateTool[] = ["blur", "rect", "highlight", "arrow"];
+const SHAPE_TOOLS: AnnotateTool[] = ["blur", "rect", "circle", "highlight", "arrow"];
+
+/** Clean filled arrow: shaft stops at head base so the tip stays sharp. */
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  strokeWidth: number,
+  color: string
+) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 2) return;
+
+  const angle = Math.atan2(dy, dx);
+  const headLen = Math.min(len * 0.4, Math.max(16, strokeWidth * 5));
+  const headHalf = headLen * 0.55;
+  const baseX = b.x - Math.cos(angle) * headLen;
+  const baseY = b.y - Math.sin(angle) * headLen;
+  const ox = Math.cos(angle + Math.PI / 2) * headHalf;
+  const oy = Math.sin(angle + Math.PI / 2) * headHalf;
+
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = strokeWidth;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // Shaft to head base
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(baseX, baseY);
+  ctx.stroke();
+
+  // Solid triangular head
+  ctx.beginPath();
+  ctx.moveTo(b.x, b.y);
+  ctx.lineTo(baseX + ox, baseY + oy);
+  ctx.lineTo(baseX - ox, baseY - oy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
 
 /** Annotation editor for an already-cropped snip region. */
 export function SnipOverlay({ capture, onClose, onSaved }: Props) {
@@ -188,6 +236,7 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
   const [panY, setPanY] = useState(0);
   const [isPanning, setIsPanning] = useState(false);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const [redoStack, setRedoStack] = useState<Stroke[]>([]);
   const [current, setCurrent] = useState<Stroke | null>(null);
   const [dragging, setDragging] = useState(false);
   const [callout, setCallout] = useState(1);
@@ -198,9 +247,75 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
   const layoutRef = useRef<ViewLayout>({ ax: 0, ay: 0, scale: 1, fit: 1, aw: 0, ah: 0 });
   const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const panDragRef = useRef<{ startX: number; startY: number } | null>(null);
+  const currentRef = useRef<Stroke | null>(null);
+  const strokesRef = useRef(strokes);
+  const redoRef = useRef(redoStack);
   const blurStrengthRef = useRef(blurStrength);
   blurStrengthRef.current = blurStrength;
+  strokesRef.current = strokes;
+  redoRef.current = redoStack;
+  currentRef.current = current;
   viewRef.current = { zoom: zoomLevel, panX, panY };
+
+  function commitStroke(stroke: Stroke) {
+    setStrokes((s) => {
+      const next = [...s, stroke];
+      strokesRef.current = next;
+      return next;
+    });
+    setRedoStack([]);
+    redoRef.current = [];
+  }
+
+  function undo() {
+    const s = strokesRef.current;
+    if (s.length === 0) return;
+    const removed = s[s.length - 1];
+    const next = s.slice(0, -1);
+    strokesRef.current = next;
+    setStrokes(next);
+    const nextRedo = [...redoRef.current, removed];
+    redoRef.current = nextRedo;
+    setRedoStack(nextRedo);
+    if (removed.tool === "number") {
+      setCallout((n) => Math.max(1, n - 1));
+    }
+  }
+
+  function redo() {
+    const r = redoRef.current;
+    if (r.length === 0) return;
+    const restored = r[r.length - 1];
+    const nextRedo = r.slice(0, -1);
+    redoRef.current = nextRedo;
+    setRedoStack(nextRedo);
+    const nextStrokes = [...strokesRef.current, restored];
+    strokesRef.current = nextStrokes;
+    setStrokes(nextStrokes);
+    if (restored.tool === "number" && restored.number != null) {
+      setCallout((n) => Math.max(n, restored.number! + 1));
+    }
+  }
+
+  function finishCurrentStroke() {
+    const c = currentRef.current;
+    currentRef.current = null;
+    setCurrent(null);
+    setDragging(false);
+    if (!c) return;
+
+    if (SHAPE_TOOLS.includes(c.tool)) {
+      if (c.points.length < 2) return;
+      const a = c.points[0];
+      const b = c.points[c.points.length - 1];
+      if (Math.abs(b.x - a.x) < 5 || Math.abs(b.y - a.y) < 5) return;
+      commitStroke(c);
+      return;
+    }
+
+    // Pen: need at least 2 points or it's an invisible click
+    if (c.points.length >= 2) commitStroke(c);
+  }
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -249,6 +364,22 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z") && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      // Ctrl+R redo (also Ctrl+Y / Ctrl+Shift+Z)
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === "r" || e.key === "R" || e.key === "y" || e.key === "Y" || (e.shiftKey && (e.key === "z" || e.key === "Z")))
+      ) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
         setZoomLevel((z) => clampZoom(Math.round((z + ZOOM_STEP) * 100) / 100));
@@ -311,20 +442,9 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
         panDragRef.current = null;
         setIsPanning(false);
       }
-      setCurrent((c) => {
-        if (!c) return null;
-        // Shape tools: discard accidental clicks / tiny boxes
-        if (SHAPE_TOOLS.includes(c.tool) && c.points.length >= 2) {
-          const a = c.points[0];
-          const b = c.points[c.points.length - 1];
-          if (Math.abs(b.x - a.x) < 5 || Math.abs(b.y - a.y) < 5) return null;
-        } else if (SHAPE_TOOLS.includes(c.tool)) {
-          return null;
-        }
-        setStrokes((s) => [...s, c]);
-        return null;
-      });
-      setDragging(false);
+      // Commit outside setState updaters — Strict Mode double-invokes updaters
+      // and was duplicating every stroke (needed Ctrl+Z twice to undo).
+      finishCurrentStroke();
     };
     window.addEventListener("mouseup", end);
     return () => window.removeEventListener("mouseup", end);
@@ -406,16 +526,17 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
             : tool === "number"
               ? "#60a5fa"
               : drawColor,
-      width: tool === "highlight" ? 18 : tool === "blur" ? 24 : 3,
+      width: tool === "highlight" ? 18 : tool === "blur" ? 24 : tool === "arrow" ? 4 : 3,
       points: [p],
       number: tool === "number" ? callout : undefined,
       blurStrength: tool === "blur" ? blurStrength : undefined,
     };
     if (tool === "number") {
       setCallout((n) => n + 1);
-      setStrokes((s) => [...s, stroke]);
+      commitStroke(stroke);
       return;
     }
+    currentRef.current = stroke;
     setCurrent(stroke);
     setDragging(true);
   }
@@ -438,14 +559,15 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
         setHoverColor(null);
       }
     }
-    if (!dragging || !current) return;
+    if (!dragging || !currentRef.current) return;
     const p = annotatePoint(e);
+    const cur = currentRef.current;
     // Shape tools: mutate ONE live box (start + end) — never stack frames as new boxes
-    if (SHAPE_TOOLS.includes(current.tool)) {
-      setCurrent({ ...current, points: [current.points[0], p] });
-    } else {
-      setCurrent({ ...current, points: [...current.points, p] });
-    }
+    const next = SHAPE_TOOLS.includes(cur.tool)
+      ? { ...cur, points: [cur.points[0], p] }
+      : { ...cur, points: [...cur.points, p] };
+    currentRef.current = next;
+    setCurrent(next);
   }
 
   async function exportAnnotated() {
@@ -589,6 +711,27 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
 
         <div className="mx-1 h-6 w-px bg-[#2d2d2d]" />
 
+        <button
+          type="button"
+          title="Undo (Ctrl+Z)"
+          disabled={strokes.length === 0}
+          onClick={undo}
+          className="flex h-9 w-9 items-center justify-center rounded-md text-[#888888] transition hover:bg-[#2a2a2a] hover:text-white disabled:opacity-30"
+        >
+          <Undo2 size={15} />
+        </button>
+        <button
+          type="button"
+          title="Redo (Ctrl+R)"
+          disabled={redoStack.length === 0}
+          onClick={redo}
+          className="flex h-9 w-9 items-center justify-center rounded-md text-[#888888] transition hover:bg-[#2a2a2a] hover:text-white disabled:opacity-30"
+        >
+          <Redo2 size={15} />
+        </button>
+
+        <div className="mx-1 h-6 w-px bg-[#2d2d2d]" />
+
         <label
           className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-[#333] hover:border-[#555]"
           title="Draw color"
@@ -690,7 +833,7 @@ function drawStroke(
     return;
   }
 
-  if ((s.tool === "rect" || s.tool === "highlight") && pts.length >= 2) {
+  if ((s.tool === "rect" || s.tool === "highlight" || s.tool === "circle") && pts.length >= 2) {
     const a = pts[0];
     const b = pts[pts.length - 1];
     const x = Math.min(a.x, b.x);
@@ -700,6 +843,12 @@ function drawStroke(
     if (s.tool === "highlight") {
       ctx.fillStyle = s.color;
       ctx.fillRect(x, y, w, h);
+    } else if (s.tool === "circle") {
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.width * scale;
+      ctx.beginPath();
+      ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.stroke();
     } else {
       ctx.strokeStyle = s.color;
       ctx.lineWidth = s.width * scale;
@@ -711,28 +860,7 @@ function drawStroke(
   if (s.tool === "arrow" && pts.length >= 2) {
     const a = pts[0];
     const b = pts[pts.length - 1];
-    ctx.strokeStyle = s.color;
-    ctx.fillStyle = s.color;
-    ctx.lineWidth = s.width * scale;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-    const angle = Math.atan2(b.y - a.y, b.x - a.x);
-    const head = 12 * scale;
-    ctx.beginPath();
-    ctx.moveTo(b.x, b.y);
-    ctx.lineTo(
-      b.x - head * Math.cos(angle - Math.PI / 6),
-      b.y - head * Math.sin(angle - Math.PI / 6)
-    );
-    ctx.lineTo(
-      b.x - head * Math.cos(angle + Math.PI / 6),
-      b.y - head * Math.sin(angle + Math.PI / 6)
-    );
-    ctx.closePath();
-    ctx.fill();
+    drawArrow(ctx, a, b, s.width * scale, s.color);
     return;
   }
 

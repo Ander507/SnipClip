@@ -37,6 +37,7 @@ function App() {
     clearOnBoot: false,
     clearInterval: "never",
     lastCleanup: 0,
+    launchAtStartup: false,
   });
   const categoryRef = useRef(category);
   categoryRef.current = category;

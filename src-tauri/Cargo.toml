@@ -1,6 +1,6 @@
 [package]
 name = "snipclip"
-version = "0.1.0"
+version = "1.0.0"
 description = "Lightning-fast clipboard manager and screenshot suite"
 authors = ["you"]
 edition = "2021"
@@ -31,3 +31,4 @@ xcap = "0.0.14"
 uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 thiserror = "2"
+tauri-plugin-autostart = "2"

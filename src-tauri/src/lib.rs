@@ -44,6 +44,16 @@ pub fn run() {
             commands::update_hotkeys,
         ])
         .setup(|app| {
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_autostart::MacosLauncher;
+                app.handle().plugin(tauri_plugin_autostart::init(
+                    MacosLauncher::LaunchAgent,
+                    // Login launch stays in tray until a hotkey / tray click
+                    Some(vec!["--minimized".into()]),
+                ))?;
+            }
+
             let app_data = app
                 .path()
                 .app_data_dir()
@@ -68,6 +78,14 @@ pub fn run() {
             if let Some(snipper) = app.get_webview_window("snipper") {
                 let _ = snipper.hide();
                 let _ = snipper.set_always_on_top(true);
+            }
+
+            // Autostart / --minimized: sit in tray only (hotkeys still work)
+            let start_minimized = std::env::args().any(|a| a == "--minimized" || a == "--autostart");
+            if start_minimized {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.hide();
+                }
             }
 
             let show_i = MenuItem::with_id(app, "show", "Show SnipClip", true, None::<&str>)?;

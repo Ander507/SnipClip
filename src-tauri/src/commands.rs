@@ -194,8 +194,19 @@ pub fn close_snipper(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_settings(db: State<'_, Arc<Database>>) -> Result<AppSettings, String> {
-    db.get_settings()
+pub fn get_settings(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+) -> Result<AppSettings, String> {
+    let mut settings = db.get_settings()?;
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        if let Ok(enabled) = app.autolaunch().is_enabled() {
+            settings.launch_at_startup = enabled;
+        }
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -207,6 +218,20 @@ pub fn update_settings(
 ) -> Result<AppSettings, String> {
     hotkeys::apply_hotkeys(&app, &settings)?;
     db.save_settings(&settings)?;
+
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let autolaunch = app.autolaunch();
+        if settings.launch_at_startup {
+            autolaunch
+                .enable()
+                .map_err(|e| format!("Failed to enable launch at startup: {e}"))?;
+        } else {
+            let _ = autolaunch.disable();
+        }
+    }
+
     Ok(settings)
 }
 

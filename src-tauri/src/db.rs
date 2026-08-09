@@ -46,6 +46,8 @@ pub struct AppSettings {
     pub clear_interval: String,
     /// Unix timestamp of last auto-clear run (internal bookkeeping).
     pub last_cleanup: i64,
+    /// Launch SnipClip at login (tray / --minimized).
+    pub launch_at_startup: bool,
 }
 
 impl Default for AppSettings {
@@ -56,6 +58,7 @@ impl Default for AppSettings {
             clear_on_boot: false,
             clear_interval: CLEAR_INTERVAL_NEVER.to_string(),
             last_cleanup: 0,
+            launch_at_startup: false,
         }
     }
 }
@@ -116,6 +119,9 @@ impl Database {
         if self.get_setting("last_cleanup")?.is_none() {
             self.set_setting("last_cleanup", "0")?;
         }
+        if self.get_setting("launch_at_startup")?.is_none() {
+            self.set_setting("launch_at_startup", "0")?;
+        }
         Ok(())
     }
 
@@ -153,6 +159,10 @@ impl Database {
             .get_setting("last_cleanup")?
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(0);
+        let launch_at_startup = self
+            .get_setting("launch_at_startup")?
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -163,6 +173,7 @@ impl Database {
             clear_on_boot,
             clear_interval,
             last_cleanup,
+            launch_at_startup,
         })
     }
 
@@ -180,6 +191,10 @@ impl Database {
             _ => CLEAR_INTERVAL_NEVER,
         };
         self.set_setting("clear_interval", interval)?;
+        self.set_setting(
+            "launch_at_startup",
+            if settings.launch_at_startup { "1" } else { "0" },
+        )?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }

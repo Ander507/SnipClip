@@ -25,6 +25,8 @@ export interface AppSettings {
   /** "never" | "reboot" | "daily" | "weekly" */
   clearInterval: string;
   lastCleanup: number;
+  /** Start with Windows / login — tray until hotkey */
+  launchAtStartup: boolean;
 }
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";
@@ -34,6 +36,7 @@ export type AnnotateTool =
   | "pen"
   | "arrow"
   | "rect"
+  | "circle"
   | "highlight"
   | "blur"
   | "number"

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SnipClip",
-  "version": "0.1.0",
-  "identifier": "com.ander.snipclip",
+  "version": "1.0.0",
+  "identifier": "com.ander507.snipclip",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

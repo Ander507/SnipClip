@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { RotateCcw, Keyboard, Trash2 } from "lucide-react";
+import { RotateCcw, Keyboard, Trash2, Power } from "lucide-react";
 import type { AppSettings, ClearInterval } from "../lib/types";
 import { getSettings, updateSettings } from "../lib/api";
 
@@ -17,6 +17,7 @@ const DEFAULTS: AppSettings = {
   clearOnBoot: false,
   clearInterval: "never",
   lastCleanup: 0,
+  launchAtStartup: false,
 };
 
 function displayHotkey(accel: string) {
@@ -47,7 +48,8 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.hotkeyClipboard !== b.hotkeyClipboard ||
     a.hotkeySnip !== b.hotkeySnip ||
     a.clearOnBoot !== b.clearOnBoot ||
-    a.clearInterval !== b.clearInterval
+    a.clearInterval !== b.clearInterval ||
+    a.launchAtStartup !== b.launchAtStartup
   );
 }
 
@@ -133,7 +135,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
           <div>
             <h2 className="text-[14px] font-semibold text-white">Settings</h2>
             <p className="text-[12px] text-[#777777]">
-              Hotkeys and vault cleanup. Saved bindings apply immediately.
+              Startup, hotkeys, and vault cleanup. Changes apply when you save.
             </p>
           </div>
         </div>
@@ -141,11 +143,40 @@ export function SettingsView({ onClose, onSaved }: Props) {
 
       <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
         <section className="space-y-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
+              <Power size={11} /> Startup
+            </h3>
+            <p className="mt-1 text-[12px] text-[#777777]">
+              Run in the background after login. Press your hotkeys to open; close hides to tray.
+            </p>
+          </div>
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-[#2d2d2d] bg-[#191919] px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-[13px] text-[#eeeeee]">Launch at startup</span>
+              <span className="text-[11px] text-[#777777]">
+                Starts minimized to the system tray on login.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.launchAtStartup}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, launchAtStartup: e.target.checked } : prev
+                )
+              }
+              className="h-4 w-4 cursor-pointer rounded border-[#555] bg-[#222] accent-[#60cdff]"
+            />
+          </label>
+        </section>
+
+        <section className="space-y-3">
           <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
             Global hotkeys
           </h3>
           <HotkeyRow
-            label="Clipboard toggle"
+            label="Toggle UI"
             hint="Default Ctrl + Shift + V"
             value={draft.hotkeyClipboard}
             active={capturing === "clipboard"}
@@ -223,6 +254,10 @@ export function SettingsView({ onClose, onSaved }: Props) {
             </div>
           </div>
         </section>
+
+        <p className="pt-2 text-center text-[11px] text-[#666666]">
+          Made with ❤️ by Ander507 for Stardance — Hack Club
+        </p>
 
         {error && (
           <p className="rounded-md border border-[#5a1d1d] bg-[#2a1515] px-3 py-2 text-[12px] text-[#ff8a8a]">
