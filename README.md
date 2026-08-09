@@ -3,7 +3,17 @@
 A local desktop clipboard vault and screenshot snipper — copy history, annotate captures, stay in the tray.
 
 <p align="center">
-  <img src="app-icon.png" alt="SnipClip app icon" width="160" />
+  <img src="app-icon.png" alt="SnipClip app icon" width="128" />
+</p>
+
+<p align="center">
+  <img src="docs/vault.png" alt="SnipClip clipboard vault — Images filter" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/snip.png" alt="Region snip selection overlay" width="480" />
+  &nbsp;
+  <img src="docs/settings.png" alt="SnipClip settings — startup and hotkeys" width="480" />
 </p>
 
 > **Try it:** [Download the latest Windows release](https://github.com/Ander507/SnipClip/releases/latest) (`.msi` installer or standalone `.exe`), or build from source below.
