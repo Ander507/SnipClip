@@ -7,7 +7,7 @@ export function TitleBar() {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-10 shrink-0 items-center justify-between border-b border-[#2d2d2d] bg-[#202020] px-3 select-none"
+      className="flex h-10 shrink-0 items-center justify-between border-b border-line bg-app px-3 select-none"
     >
       <div data-tauri-drag-region className="flex items-center gap-2 pl-1">
         <img
@@ -18,7 +18,7 @@ export function TitleBar() {
           className="pointer-events-none h-4 w-4 rounded-[3px]"
           draggable={false}
         />
-        <span className="text-xs font-semibold tracking-wide text-[#cccccc]">
+        <span className="text-xs font-semibold tracking-wide text-fg-secondary">
           SnipClip
         </span>
       </div>
@@ -27,7 +27,7 @@ export function TitleBar() {
         <button
           type="button"
           aria-label="Minimize"
-          className="flex w-11 items-center justify-center text-[#cccccc] transition hover:bg-[#2d2d2d]"
+          className="flex w-11 items-center justify-center text-fg-secondary transition hover:bg-hover"
           onClick={() => void appWindow.minimize()}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -36,7 +36,7 @@ export function TitleBar() {
         <button
           type="button"
           aria-label="Maximize"
-          className="flex w-11 items-center justify-center text-[#cccccc] transition hover:bg-[#2d2d2d]"
+          className="flex w-11 items-center justify-center text-fg-secondary transition hover:bg-hover"
           onClick={() => void appWindow.toggleMaximize()}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -45,7 +45,7 @@ export function TitleBar() {
         <button
           type="button"
           aria-label="Close"
-          className="flex w-11 items-center justify-center text-[#cccccc] transition hover:bg-[#c42b1c] hover:text-white"
+          className="flex w-11 items-center justify-center text-fg-secondary transition hover:bg-[#c42b1c] hover:text-white"
           onClick={() => void appWindow.close()}
           onMouseDown={(e) => e.stopPropagation()}
         >

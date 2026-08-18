@@ -48,6 +48,10 @@ pub struct AppSettings {
     pub last_cleanup: i64,
     /// Launch SnipClip at login (tray / --minimized).
     pub launch_at_startup: bool,
+    /// "dark" | "light"
+    pub theme_mode: String,
+    /// "cyan" | "purple" | "green" | "orange"
+    pub accent_color: String,
 }
 
 impl Default for AppSettings {
@@ -59,6 +63,8 @@ impl Default for AppSettings {
             clear_interval: CLEAR_INTERVAL_NEVER.to_string(),
             last_cleanup: 0,
             launch_at_startup: false,
+            theme_mode: "dark".to_string(),
+            accent_color: "cyan".to_string(),
         }
     }
 }
@@ -122,6 +128,12 @@ impl Database {
         if self.get_setting("launch_at_startup")?.is_none() {
             self.set_setting("launch_at_startup", "0")?;
         }
+        if self.get_setting("theme_mode")?.is_none() {
+            self.set_setting("theme_mode", "dark")?;
+        }
+        if self.get_setting("accent_color")?.is_none() {
+            self.set_setting("accent_color", "cyan")?;
+        }
         Ok(())
     }
 
@@ -163,6 +175,21 @@ impl Database {
             .get_setting("launch_at_startup")?
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        let theme_mode = match self
+            .get_setting("theme_mode")?
+            .unwrap_or_else(|| "dark".to_string())
+            .as_str()
+        {
+            "light" => "light".to_string(),
+            _ => "dark".to_string(),
+        };
+        let accent_raw = self
+            .get_setting("accent_color")?
+            .unwrap_or_else(|| "cyan".to_string());
+        let accent_color = match accent_raw.as_str() {
+            "purple" | "green" | "orange" => accent_raw,
+            _ => "cyan".to_string(),
+        };
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -174,6 +201,8 @@ impl Database {
             clear_interval,
             last_cleanup,
             launch_at_startup,
+            theme_mode,
+            accent_color,
         })
     }
 
@@ -195,6 +224,17 @@ impl Database {
             "launch_at_startup",
             if settings.launch_at_startup { "1" } else { "0" },
         )?;
+        let theme = if settings.theme_mode == "light" {
+            "light"
+        } else {
+            "dark"
+        };
+        self.set_setting("theme_mode", theme)?;
+        let accent = match settings.accent_color.as_str() {
+            "purple" | "green" | "orange" => settings.accent_color.as_str(),
+            _ => "cyan",
+        };
+        self.set_setting("accent_color", accent)?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }

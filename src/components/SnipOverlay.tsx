@@ -21,6 +21,7 @@ import {
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { AnnotateTool, CaptureResult } from "../lib/types";
 import { copyImage, saveSnip, saveSnipToVault } from "../lib/api";
+import { cssVar } from "../lib/theme";
 import { save } from "@tauri-apps/plugin-dialog";
 
 interface Props {
@@ -332,7 +333,7 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
     layoutRef.current = layout;
     const { ax, ay, scale, aw, ah } = layout;
 
-    ctx.fillStyle = "#121212";
+    ctx.fillStyle = cssVar("--sc-inset", "#121212");
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, capture.width, capture.height, ax, ay, aw, ah);
 
@@ -645,53 +646,53 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
         onContextMenu={(e) => e.preventDefault()}
       />
 
-      <div className="pointer-events-auto absolute left-1/2 top-5 z-10 flex -translate-x-1/2 select-none items-center gap-3 rounded-lg border border-[#2d2d2d] bg-[#191919] px-3 py-2 text-[11px] text-[#cccccc]">
+      <div className="pointer-events-auto absolute left-1/2 top-5 z-10 flex -translate-x-1/2 select-none items-center gap-3 rounded-lg border border-line bg-raised px-3 py-2 text-[11px] text-fg-secondary">
         {showBlurControls && (
           <>
             <div className="flex items-center gap-2">
-              <span className="text-[#888]">Blur</span>
+              <span className="text-fg-muted">Blur</span>
               <input
                 type="range"
                 min={4}
                 max={35}
                 value={blurStrength}
                 onChange={(e) => setBlurStrength(Number(e.target.value))}
-                className="h-1 w-24 cursor-pointer accent-[#60cdff]"
+                className="h-1 w-24 cursor-pointer accent-accent"
               />
-              <span className="w-7 font-mono text-right text-[#aaaaaa]">{blurStrength}px</span>
+              <span className="w-7 font-mono text-right text-fg-muted">{blurStrength}px</span>
             </div>
-            <div className="h-4 w-px bg-[#333]" />
+            <div className="h-4 w-px bg-line-strong" />
           </>
         )}
         <div className="flex items-center gap-1.5">
-          <span className="text-[#888]">Zoom</span>
+          <span className="text-fg-muted">Zoom</span>
           <button
             type="button"
             title="Zoom out"
             onClick={() => setZoomLevel((z) => clampZoom(Math.round((z - ZOOM_STEP) * 100) / 100))}
-            className="flex h-6 w-6 items-center justify-center rounded bg-[#252525] text-[#ccc] hover:bg-[#333]"
+            className="flex h-6 w-6 items-center justify-center rounded bg-muted text-fg-secondary hover:bg-hover"
           >
             <Minus size={12} />
           </button>
-          <span className="w-10 text-center font-mono text-[#aaa]">
+          <span className="w-10 text-center font-mono text-fg-muted">
             {Math.round(zoomLevel * 100)}%
           </span>
           <button
             type="button"
             title="Zoom in"
             onClick={() => setZoomLevel((z) => clampZoom(Math.round((z + ZOOM_STEP) * 100) / 100))}
-            className="flex h-6 w-6 items-center justify-center rounded bg-[#252525] text-[#ccc] hover:bg-[#333]"
+            className="flex h-6 w-6 items-center justify-center rounded bg-muted text-fg-secondary hover:bg-hover"
           >
             <Plus size={12} />
           </button>
         </div>
       </div>
 
-      <div className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-md border border-white/10 bg-black/70 px-3 py-1 font-mono text-[11px] text-[#cccccc]">
+      <div className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-md border border-white/10 bg-black/70 px-3 py-1 font-mono text-[11px] text-fg-secondary">
         Zoom: {Math.round(zoomLevel * 100)}% · Scroll zoom · Wheel / Shift-drag to pan
       </div>
 
-      <div className="pointer-events-auto absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-[#2d2d2d] bg-[#1e1e1e] p-1.5 shadow-xl">
+      <div className="pointer-events-auto absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-line bg-app p-1.5 shadow-xl">
         {TOOLS.map(({ id, icon: Icon, label }) => (
           <button
             key={id}
@@ -701,22 +702,22 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
             className={clsx(
               "flex h-9 w-9 items-center justify-center rounded-md transition",
               tool === id
-                ? "bg-[#2d2d2d] text-white"
-                : "text-[#888888] hover:bg-[#2a2a2a] hover:text-white"
+                ? "bg-hover text-fg"
+                : "text-fg-muted hover:bg-muted hover:text-fg"
             )}
           >
             <Icon size={15} />
           </button>
         ))}
 
-        <div className="mx-1 h-6 w-px bg-[#2d2d2d]" />
+        <div className="mx-1 h-6 w-px bg-line" />
 
         <button
           type="button"
           title="Undo (Ctrl+Z)"
           disabled={strokes.length === 0}
           onClick={undo}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-[#888888] transition hover:bg-[#2a2a2a] hover:text-white disabled:opacity-30"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-fg-muted transition hover:bg-muted hover:text-fg disabled:opacity-30"
         >
           <Undo2 size={15} />
         </button>
@@ -725,15 +726,15 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
           title="Redo (Ctrl+R)"
           disabled={redoStack.length === 0}
           onClick={redo}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-[#888888] transition hover:bg-[#2a2a2a] hover:text-white disabled:opacity-30"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-fg-muted transition hover:bg-muted hover:text-fg disabled:opacity-30"
         >
           <Redo2 size={15} />
         </button>
 
-        <div className="mx-1 h-6 w-px bg-[#2d2d2d]" />
+        <div className="mx-1 h-6 w-px bg-line" />
 
         <label
-          className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-[#333] hover:border-[#555]"
+          className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-line-strong hover:border-fg-muted"
           title="Draw color"
         >
           <span
@@ -748,12 +749,12 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
           />
         </label>
 
-        <div className="mx-1 h-6 w-px bg-[#2d2d2d]" />
+        <div className="mx-1 h-6 w-px bg-line" />
         <button
           type="button"
           disabled={busy}
           onClick={() => void handleCopy()}
-          className="flex h-9 items-center gap-1.5 rounded-md bg-[#60cdff] px-3 text-[12px] font-semibold text-black transition hover:brightness-110 disabled:opacity-50"
+          className="flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-semibold text-accent-fg transition hover:brightness-110 disabled:opacity-50"
         >
           <Copy size={13} /> Copy
         </button>
@@ -761,32 +762,32 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
           type="button"
           disabled={busy}
           onClick={() => void handleSave()}
-          className="flex h-9 items-center gap-1.5 rounded-md bg-[#2d2d2d] px-3 text-[12px] font-medium text-[#eeeeee] transition hover:bg-[#3d3d3d] disabled:opacity-50"
+          className="flex h-9 items-center gap-1.5 rounded-md bg-hover px-3 text-[12px] font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-50"
         >
           <Save size={13} /> Save
         </button>
         <button
           type="button"
           onClick={onClose}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-[#888888] hover:bg-[#c42b1c] hover:text-white"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-fg-muted hover:bg-[#c42b1c] hover:text-white"
         >
           <X size={15} />
         </button>
       </div>
 
       {tool === "eyedropper" && hoverColor && (
-        <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex -translate-x-1/2 items-center gap-2 rounded-md border border-[#2d2d2d] bg-[#1e1e1e] px-3 py-1.5 font-mono text-[12px] text-[#ccc]">
+        <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex -translate-x-1/2 items-center gap-2 rounded-md border border-line bg-app px-3 py-1.5 font-mono text-[12px] text-fg-secondary">
           <span
             className="h-4 w-4 rounded-sm border border-white/20"
             style={{ backgroundColor: hoverColor }}
           />
           {hoverColor}
-          <span className="text-[#666]">click to copy</span>
+          <span className="text-fg-faint">click to copy</span>
         </div>
       )}
 
       {toast && (
-        <div className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-md border border-[#2d2d2d] bg-[#1e1e1e] px-4 py-1.5 text-[12px] text-[#60cdff]">
+        <div className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-md border border-line bg-app px-4 py-1.5 text-[12px] text-accent">
           {toast}
         </div>
       )}

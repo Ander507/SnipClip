@@ -138,11 +138,11 @@ export function SnipSelector({ active, onCaptured, onCancel }: Props) {
       {showRect && (
         <>
           <div
-            className="pointer-events-none absolute border border-cyan-400 bg-cyan-500/10 shadow-2xl"
+            className="pointer-events-none absolute border border-accent bg-accent/10 shadow-2xl"
             style={{ left, top, width: w, height: h }}
           />
           <div
-            className="pointer-events-none absolute rounded bg-black/60 px-2 py-0.5 font-mono text-[11px] text-cyan-300"
+            className="pointer-events-none absolute rounded bg-black/60 px-2 py-0.5 font-mono text-[11px] text-accent"
             style={{ left, top: Math.max(8, top - 26) }}
           >
             {Math.round(w)} × {Math.round(h)}

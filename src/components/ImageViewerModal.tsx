@@ -36,24 +36,24 @@ export function ImageViewerModal({
       aria-label="Screenshot preview"
     >
       <div
-        className="relative flex max-h-[85vh] max-w-4xl flex-col items-center rounded-xl border border-[#333333] bg-[#191919] p-3 shadow-2xl"
+        className="relative flex max-h-[85vh] max-w-4xl flex-col items-center rounded-xl border border-line-strong bg-raised p-3 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-2 flex w-full items-center justify-between border-b border-[#2d2d2d] px-2 pb-3">
-          <span className="font-mono text-xs text-[#888888]">Screenshot Preview</span>
+        <div className="mb-2 flex w-full items-center justify-between border-b border-line px-2 pb-3">
+          <span className="font-mono text-xs text-fg-muted">Screenshot Preview</span>
           <button
             type="button"
             onClick={onClose}
-            className="rounded px-2 py-1 text-[#888888] transition hover:bg-[#2d2d2d] hover:text-white"
+            className="rounded px-2 py-1 text-fg-muted transition hover:bg-hover hover:text-fg"
             aria-label="Close"
           >
             <X size={14} />
           </button>
         </div>
 
-        <div className="max-h-[70vh] overflow-auto rounded-lg border border-[#262626] bg-[#121212] p-2">
+        <div className="max-h-[70vh] overflow-auto rounded-lg border border-line bg-inset p-2">
           {loading || !imageSrc ? (
-            <div className="flex h-48 w-72 items-center justify-center text-[12px] text-[#666666]">
+            <div className="flex h-48 w-72 items-center justify-center text-[12px] text-fg-faint">
               Loading…
             </div>
           ) : (
@@ -74,7 +74,7 @@ export function ImageViewerModal({
               onEdit(imageSrc);
               onClose();
             }}
-            className="inline-flex items-center gap-2 rounded-lg border border-[#3d3d3d] bg-[#2a2a2a] px-4 py-2 text-xs font-medium text-zinc-200 transition hover:bg-[#333333] disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-hover px-4 py-2 text-xs font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-40"
           >
             <Pencil size={13} />
             Edit Image
@@ -86,14 +86,14 @@ export function ImageViewerModal({
               onCopy();
               onClose();
             }}
-            className="rounded-lg bg-[#00e8c6] px-4 py-2 text-xs font-semibold text-black transition hover:bg-[#00c4a7] disabled:opacity-40"
+            className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-accent-fg transition hover:brightness-110 disabled:opacity-40"
           >
             Copy to Clipboard
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg bg-[#252525] px-4 py-2 text-xs text-zinc-300 transition hover:bg-[#303030]"
+            className="rounded-lg bg-muted px-4 py-2 text-xs text-fg-secondary transition hover:bg-hover"
           >
             Close
           </button>

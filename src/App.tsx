@@ -19,6 +19,8 @@ import {
   getItem,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
+import { DEFAULT_SETTINGS } from "./lib/types";
+import { applyTheme } from "./lib/theme";
 
 function App() {
   const [items, setItems] = useState<ClipboardItem[]>([]);
@@ -31,14 +33,7 @@ function App() {
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [settings, setSettings] = useState<AppSettings>({
-    hotkeyClipboard: "Control+Shift+V",
-    hotkeySnip: "Control+Shift+S",
-    clearOnBoot: false,
-    clearInterval: "never",
-    lastCleanup: 0,
-    launchAtStartup: false,
-  });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const categoryRef = useRef(category);
   categoryRef.current = category;
   const searchRef = useRef<HTMLInputElement>(null);
@@ -71,7 +66,12 @@ function App() {
   }, [refresh]);
 
   useEffect(() => {
-    void getSettings().then(setSettings).catch(console.error);
+    void getSettings()
+      .then((s) => {
+        setSettings(s);
+        applyTheme(s.themeMode, s.accentColor);
+      })
+      .catch(console.error);
   }, []);
 
   const startSnip = useCallback(async () => {
@@ -281,7 +281,7 @@ function App() {
   }, [items, capture, view]);
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-[#202020] text-white">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-app text-fg">
       <TitleBar />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar
@@ -297,17 +297,20 @@ function App() {
           count={items.length}
           snipHotkeyLabel={formatHotkeyShort(settings.hotkeySnip)}
         />
-        <main className="flex min-w-0 flex-1 flex-col bg-[#202020]">
+        <main className="flex min-w-0 flex-1 flex-col bg-app">
           {view === "settings" ? (
             <SettingsView
               onClose={() => setView("vault")}
-              onSaved={(s) => setSettings(s)}
+              onSaved={(s) => {
+                setSettings(s);
+                applyTheme(s.themeMode, s.accentColor);
+              }}
             />
           ) : (
             <>
-              <div className="border-b border-[#2d2d2d] px-4 py-3">
+              <div className="border-b border-line px-4 py-3">
                 <SearchBar ref={searchRef} value={query} onChange={setQuery} />
-                <p className="mt-2 text-[11px] text-[#666666]">
+                <p className="mt-2 text-[11px] text-fg-faint">
                   ↑↓ navigate · Enter copy ·{" "}
                   {formatHotkeyShort(settings.hotkeyClipboard)} toggle
                 </p>
@@ -322,7 +325,7 @@ function App() {
                 onPreviewImage={(id) => void openImagePreview(id)}
               />
               {status && (
-                <div className="border-t border-[#2d2d2d] px-4 py-2 text-[11px] text-[#60cdff]">
+                <div className="border-t border-line px-4 py-2 text-[11px] text-accent">
                   {status}
                 </div>
               )}

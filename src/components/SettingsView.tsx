@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { RotateCcw, Keyboard, Trash2, Power } from "lucide-react";
+import { RotateCcw, Keyboard, Trash2, Power, Palette, Moon, Sun } from "lucide-react";
 import type { AppSettings, ClearInterval } from "../lib/types";
+import { DEFAULT_SETTINGS } from "../lib/types";
 import { getSettings, updateSettings } from "../lib/api";
+import { ACCENTS, applyTheme, type AccentColor, type ThemeMode } from "../lib/theme";
 
 interface Props {
   onClose: () => void;
@@ -10,15 +12,6 @@ interface Props {
 }
 
 type CaptureTarget = "clipboard" | "snip" | null;
-
-const DEFAULTS: AppSettings = {
-  hotkeyClipboard: "Control+Shift+V",
-  hotkeySnip: "Control+Shift+S",
-  clearOnBoot: false,
-  clearInterval: "never",
-  lastCleanup: 0,
-  launchAtStartup: false,
-};
 
 function displayHotkey(accel: string) {
   return accel
@@ -49,7 +42,9 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.hotkeySnip !== b.hotkeySnip ||
     a.clearOnBoot !== b.clearOnBoot ||
     a.clearInterval !== b.clearInterval ||
-    a.launchAtStartup !== b.launchAtStartup
+    a.launchAtStartup !== b.launchAtStartup ||
+    a.themeMode !== b.themeMode ||
+    a.accentColor !== b.accentColor
   );
 }
 
@@ -69,6 +64,11 @@ export function SettingsView({ onClose, onSaved }: Props) {
       setDraft(s);
     });
   }, []);
+
+  useEffect(() => {
+    if (!draft) return;
+    applyTheme(draft.themeMode, draft.accentColor);
+  }, [draft]);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
     if (!captureRef.current) return;
@@ -115,11 +115,16 @@ export function SettingsView({ onClose, onSaved }: Props) {
     }
   }
 
+  function handleBack() {
+    if (settings) applyTheme(settings.themeMode, settings.accentColor);
+    onClose();
+  }
+
   const dirty = draft && settings && isDirty(draft, settings);
 
   if (!draft) {
     return (
-      <div className="flex flex-1 items-center justify-center text-[13px] text-[#777777]">
+      <div className="flex flex-1 items-center justify-center text-[13px] text-fg-muted">
         Loading settings…
       </div>
     );
@@ -127,15 +132,15 @@ export function SettingsView({ onClose, onSaved }: Props) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-[#2d2d2d] px-5 py-4">
+      <div className="border-b border-line px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#252525] text-[#cccccc]">
+          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted text-fg-secondary">
             <Keyboard size={16} />
           </div>
           <div>
-            <h2 className="text-[14px] font-semibold text-white">Settings</h2>
-            <p className="text-[12px] text-[#777777]">
-              Startup, hotkeys, and vault cleanup. Changes apply when you save.
+            <h2 className="text-[14px] font-semibold text-fg">Settings</h2>
+            <p className="text-[12px] text-fg-muted">
+              Appearance, startup, hotkeys, and vault cleanup. Changes apply when you save.
             </p>
           </div>
         </div>
@@ -144,17 +149,97 @@ export function SettingsView({ onClose, onSaved }: Props) {
       <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
         <section className="space-y-3">
           <div>
-            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+              <Palette size={11} /> Appearance
+            </h3>
+            <p className="mt-1 text-[12px] text-fg-muted">
+              Preview updates instantly. Save to keep the theme across launches.
+            </p>
+          </div>
+
+          <div className="space-y-0 rounded-lg border border-line bg-raised">
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <span className="block text-[13px] text-fg-secondary">Theme</span>
+                <span className="text-[11px] text-fg-muted">Dark glass or light surfaces.</span>
+              </div>
+              <div className="flex rounded-md border border-line bg-inset p-0.5">
+                {(
+                  [
+                    { id: "dark" as ThemeMode, label: "Dark", icon: Moon },
+                    { id: "light" as ThemeMode, label: "Light", icon: Sun },
+                  ] as const
+                ).map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() =>
+                      setDraft((prev) => (prev ? { ...prev, themeMode: id } : prev))
+                    }
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[12px] font-medium transition",
+                      draft.themeMode === id
+                        ? "bg-accent text-accent-fg"
+                        : "text-fg-muted hover:text-fg"
+                    )}
+                  >
+                    <Icon size={12} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mx-4 h-px bg-line" />
+
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <span className="block text-[13px] text-fg-secondary">Accent color</span>
+                <span className="text-[11px] text-fg-muted">
+                  Highlights, pins, and primary actions.
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {ACCENTS.map((accent) => {
+                  const selected = draft.accentColor === accent.id;
+                  return (
+                    <button
+                      key={accent.id}
+                      type="button"
+                      title={accent.label}
+                      aria-label={accent.label}
+                      aria-pressed={selected}
+                      onClick={() =>
+                        setDraft((prev) =>
+                          prev ? { ...prev, accentColor: accent.id as AccentColor } : prev
+                        )
+                      }
+                      className={clsx(
+                        "h-7 w-7 rounded-full border-2 transition",
+                        selected ? "border-fg scale-110" : "border-transparent hover:scale-105"
+                      )}
+                      style={{ backgroundColor: accent.hex }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
               <Power size={11} /> Startup
             </h3>
-            <p className="mt-1 text-[12px] text-[#777777]">
+            <p className="mt-1 text-[12px] text-fg-muted">
               Run in the background after login. Press your hotkeys to open; close hides to tray.
             </p>
           </div>
-          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-[#2d2d2d] bg-[#191919] px-4 py-3">
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
             <div className="min-w-0">
-              <span className="block text-[13px] text-[#eeeeee]">Launch at startup</span>
-              <span className="text-[11px] text-[#777777]">
+              <span className="block text-[13px] text-fg-secondary">Launch at startup</span>
+              <span className="text-[11px] text-fg-muted">
                 Starts minimized to the system tray on login.
               </span>
             </div>
@@ -166,13 +251,13 @@ export function SettingsView({ onClose, onSaved }: Props) {
                   prev ? { ...prev, launchAtStartup: e.target.checked } : prev
                 )
               }
-              className="h-4 w-4 cursor-pointer rounded border-[#555] bg-[#222] accent-[#60cdff]"
+              className="h-4 w-4 cursor-pointer rounded"
             />
           </label>
         </section>
 
         <section className="space-y-3">
-          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
             Global hotkeys
           </h3>
           <HotkeyRow
@@ -190,27 +275,27 @@ export function SettingsView({ onClose, onSaved }: Props) {
             onCapture={() => setCapturing("snip")}
           />
           {capturing && (
-            <p className="text-[12px] text-[#60cdff]">Listening for a shortcut… Esc to cancel</p>
+            <p className="text-[12px] text-accent">Listening for a shortcut… Esc to cancel</p>
           )}
         </section>
 
         <section className="space-y-3">
           <div>
-            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
               <Trash2 size={11} /> Vault &amp; storage cleanup
             </h3>
-            <p className="mt-1 text-[12px] text-[#777777]">
+            <p className="mt-1 text-[12px] text-fg-muted">
               Automatically purge unpinned history. Pinned items are always kept.
             </p>
           </div>
 
-          <div className="space-y-0 rounded-lg border border-[#2d2d2d] bg-[#191919]">
+          <div className="space-y-0 rounded-lg border border-line bg-raised">
             <label className="flex cursor-pointer items-center justify-between gap-4 px-4 py-3">
               <div className="min-w-0">
-                <span className="block text-[13px] text-[#eeeeee]">
+                <span className="block text-[13px] text-fg-secondary">
                   Clear unpinned on system reboot
                 </span>
-                <span className="text-[11px] text-[#777777]">
+                <span className="text-[11px] text-fg-muted">
                   Wipes temporary history when your PC restarts.
                 </span>
               </div>
@@ -222,16 +307,16 @@ export function SettingsView({ onClose, onSaved }: Props) {
                     prev ? { ...prev, clearOnBoot: e.target.checked } : prev
                   )
                 }
-                className="h-4 w-4 cursor-pointer rounded border-[#555] bg-[#222] accent-[#60cdff]"
+                className="h-4 w-4 cursor-pointer rounded"
               />
             </label>
 
-            <div className="mx-4 h-px bg-[#262626]" />
+            <div className="mx-4 h-px bg-line" />
 
             <div className="flex items-center justify-between gap-4 px-4 py-3">
               <div className="min-w-0">
-                <span className="block text-[13px] text-[#eeeeee]">Auto-clear frequency</span>
-                <span className="text-[11px] text-[#777777]">
+                <span className="block text-[13px] text-fg-secondary">Auto-clear frequency</span>
+                <span className="text-[11px] text-fg-muted">
                   Schedule rotation for unpinned clipboard items.
                 </span>
               </div>
@@ -244,7 +329,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
                       : prev
                   )
                 }
-                className="cursor-pointer rounded-md border border-[#333] bg-[#222] px-3 py-2 text-[12px] text-[#eeeeee] outline-none focus:border-[#60cdff]"
+                className="cursor-pointer rounded-md border border-line bg-inset px-3 py-2 text-[12px] text-fg-secondary outline-none focus:border-accent"
               >
                 <option value="never">Never (manual only)</option>
                 <option value="reboot">Every PC reboot</option>
@@ -255,30 +340,30 @@ export function SettingsView({ onClose, onSaved }: Props) {
           </div>
         </section>
 
-        <p className="pt-2 text-center text-[11px] text-[#666666]">
+        <p className="pt-2 text-center text-[11px] text-fg-faint">
           Made with ❤️ by Ander507 for Stardance — Hack Club
         </p>
 
         {error && (
-          <p className="rounded-md border border-[#5a1d1d] bg-[#2a1515] px-3 py-2 text-[12px] text-[#ff8a8a]">
+          <p className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] text-danger">
             {error}
           </p>
         )}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-[#2d2d2d] px-5 py-3">
+      <div className="flex items-center gap-2 border-t border-line px-5 py-3">
         <button
           type="button"
-          onClick={() => setDraft({ ...DEFAULTS, lastCleanup: draft.lastCleanup })}
-          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] text-[#aaaaaa] hover:bg-[#2d2d2d] hover:text-white"
+          onClick={() => setDraft({ ...DEFAULT_SETTINGS, lastCleanup: draft.lastCleanup })}
+          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] text-fg-muted hover:bg-hover hover:text-fg"
         >
           <RotateCcw size={12} /> Defaults
         </button>
         <div className="flex-1" />
         <button
           type="button"
-          onClick={onClose}
-          className="rounded-md px-3 py-1.5 text-[12px] text-[#aaaaaa] hover:bg-[#2d2d2d] hover:text-white"
+          onClick={handleBack}
+          className="rounded-md px-3 py-1.5 text-[12px] text-fg-muted hover:bg-hover hover:text-fg"
         >
           Back
         </button>
@@ -289,8 +374,8 @@ export function SettingsView({ onClose, onSaved }: Props) {
           className={clsx(
             "rounded-md px-3.5 py-1.5 text-[12px] font-semibold transition",
             dirty && !saving
-              ? "bg-[#60cdff] text-[#000000] hover:brightness-110"
-              : "bg-[#2d2d2d] text-[#666666]"
+              ? "bg-accent text-accent-fg hover:brightness-110"
+              : "bg-hover text-fg-faint"
           )}
         >
           {savedFlash ? "Saved" : saving ? "Saving…" : "Save"}
@@ -314,10 +399,10 @@ function HotkeyRow({
   onCapture: () => void;
 }) {
   return (
-    <div className="flex items-center gap-4 rounded-lg border border-[#2d2d2d] bg-[#191919] px-4 py-3">
+    <div className="flex items-center gap-4 rounded-lg border border-line bg-raised px-4 py-3">
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] text-[#eeeeee]">{label}</p>
-        <p className="text-[11px] text-[#777777]">{hint}</p>
+        <p className="text-[13px] text-fg-secondary">{label}</p>
+        <p className="text-[11px] text-fg-muted">{hint}</p>
       </div>
       <button
         type="button"
@@ -325,8 +410,8 @@ function HotkeyRow({
         className={clsx(
           "min-w-[150px] rounded-md border px-3 py-2 font-mono text-[12px] transition",
           active
-            ? "border-[#60cdff] bg-[#1a2a33] text-[#60cdff]"
-            : "border-[#2d2d2d] bg-[#121212] text-[#cccccc] hover:border-[#3d3d3d]"
+            ? "border-accent bg-accent-soft text-accent"
+            : "border-line bg-inset text-fg-secondary hover:border-line-strong"
         )}
       >
         {active ? "Record hotkey…" : displayHotkey(value)}

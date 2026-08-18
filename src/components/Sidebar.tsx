@@ -41,9 +41,9 @@ export function Sidebar({
   snipHotkeyLabel,
 }: Props) {
   return (
-    <aside className="flex w-52 shrink-0 flex-col justify-between border-r border-[#2d2d2d] bg-[#191919] p-3">
+    <aside className="flex w-52 shrink-0 flex-col justify-between border-r border-line bg-raised p-3">
       <nav className="flex flex-col gap-0.5">
-        <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-[#777777]">
+        <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
           Library
         </p>
         {NAV.map(({ id, label, icon: Icon }) => {
@@ -56,8 +56,8 @@ export function Sidebar({
               className={clsx(
                 "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] transition",
                 active
-                  ? "bg-[#2d2d2d] text-white"
-                  : "text-[#aaaaaa] hover:bg-[#252525] hover:text-white"
+                  ? "bg-hover text-fg"
+                  : "text-fg-muted hover:bg-muted hover:text-fg"
               )}
             >
               <Icon size={15} />
@@ -67,15 +67,15 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="space-y-0.5 border-t border-[#2d2d2d] pt-3">
+      <div className="space-y-0.5 border-t border-line pt-3">
         <button
           type="button"
           onClick={onSnip}
-          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-[#aaaaaa] transition hover:bg-[#252525] hover:text-white"
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-fg-muted transition hover:bg-muted hover:text-fg"
         >
           <Camera size={15} />
           <span>Snip</span>
-          <kbd className="ml-auto rounded bg-[#2d2d2d] px-1.5 py-0.5 text-[9px] text-[#888888]">
+          <kbd className="ml-auto rounded bg-hover px-1.5 py-0.5 text-[9px] text-fg-muted">
             {snipHotkeyLabel}
           </kbd>
         </button>
@@ -85,8 +85,8 @@ export function Sidebar({
           className={clsx(
             "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition",
             settingsOpen
-              ? "bg-[#2d2d2d] text-white"
-              : "text-[#aaaaaa] hover:bg-[#252525] hover:text-white"
+              ? "bg-hover text-fg"
+              : "text-fg-muted hover:bg-muted hover:text-fg"
           )}
         >
           <Settings size={15} />
@@ -95,12 +95,12 @@ export function Sidebar({
         <button
           type="button"
           onClick={onClear}
-          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-[#aaaaaa] transition hover:bg-[#252525] hover:text-[#ff6b6b]"
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-fg-muted transition hover:bg-muted hover:text-danger"
         >
           <Trash2 size={15} />
           <span>Clear history</span>
         </button>
-        <p className="px-2.5 pt-2 text-[11px] text-[#666666]">{count} items</p>
+        <p className="px-2.5 pt-2 text-[11px] text-fg-faint">{count} items</p>
       </div>
     </aside>
   );

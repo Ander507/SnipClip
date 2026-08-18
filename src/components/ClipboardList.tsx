@@ -96,12 +96,12 @@ export function ClipboardList({
   if (safeItems.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-        <div className="rounded-lg border border-[#2d2d2d] bg-[#191919] px-10 py-12">
-          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-[#252525] text-[#888888]">
+        <div className="rounded-lg border border-line bg-raised px-10 py-12">
+          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted text-fg-muted">
             <Copy size={18} />
           </div>
-          <p className="text-sm font-medium text-[#eeeeee]">No items yet</p>
-          <p className="mt-1.5 max-w-[240px] text-[12px] leading-relaxed text-[#777777]">
+          <p className="text-sm font-medium text-fg-secondary">No items yet</p>
+          <p className="mt-1.5 max-w-[240px] text-[12px] leading-relaxed text-fg-muted">
             Copy text, links, or images — they'll appear here.
           </p>
         </div>
@@ -133,8 +133,8 @@ export function ClipboardList({
               className={clsx(
                 "group absolute left-0 top-0 flex w-full cursor-pointer items-center gap-3.5 rounded-lg border p-3.5 transition-all",
                 selected
-                  ? "border-[#333333] bg-[#1e1e1e]"
-                  : "border-[#262626] bg-[#191919] hover:border-[#333333] hover:bg-[#1e1e1e]"
+                  ? "border-accent bg-accent-soft"
+                  : "border-line bg-raised hover:border-line-strong hover:bg-hover"
               )}
               style={{ transform: `translateY(${row.start}px)` }}
               onClick={() => {
@@ -145,7 +145,7 @@ export function ClipboardList({
                 if (!isImage) onCopy(item.id);
               }}
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[#2d2d2d] bg-[#222222] text-[#888888]">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-muted text-fg-muted">
                 {thumb ? (
                   <img
                     src={thumb}
@@ -160,39 +160,39 @@ export function ClipboardList({
 
               <div className="min-w-0 flex-1 pr-2">
                 {isImage ? (
-                  <p className="truncate text-xs font-medium text-[#dedede]">
+                  <p className="truncate text-xs font-medium text-fg-secondary">
                     {item.preview?.startsWith("data:")
                       ? "Screenshot — click to preview"
                       : item.preview || "Image"}
                   </p>
                 ) : isCode ? (
-                  <div className="my-0.5 overflow-hidden rounded-md border border-[#262626] bg-[#121212]">
-                    <div className="flex items-center justify-between border-b border-[#262626] bg-[#1a1a1a] px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-[#777777]">
+                  <div className="my-0.5 overflow-hidden rounded-md border border-line bg-inset">
+                    <div className="flex items-center justify-between border-b border-line bg-muted px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-fg-muted">
                       <span>{languageLabel(lang)}</span>
-                      <span className="text-[#555555]">snippet</span>
+                      <span className="text-fg-faint">snippet</span>
                     </div>
-                    <pre className="max-h-36 overflow-x-auto overflow-y-auto whitespace-pre-wrap p-2.5 font-mono text-xs leading-relaxed text-[#00e8c6]">
+                    <pre className="max-h-36 overflow-x-auto overflow-y-auto whitespace-pre-wrap p-2.5 font-mono text-xs leading-relaxed text-accent">
                       <code>{codePreview(textBody)}</code>
                     </pre>
                   </div>
                 ) : (
-                  <p className="truncate text-xs font-medium text-[#dedede]">
+                  <p className="truncate text-xs font-medium text-fg-secondary">
                     {item.preview || item.content}
                   </p>
                 )}
 
                 <div className="mt-1 flex items-center gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-[#777777]">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-fg-muted">
                     {isCode ? languageLabel(lang) : item.contentType}
                   </span>
-                  <span className="text-[10px] text-[#444444]">•</span>
-                  <span className="font-mono text-[10px] text-[#666666]">
+                  <span className="text-[10px] text-fg-faint">•</span>
+                  <span className="font-mono text-[10px] text-fg-faint">
                     {formatTime(item.createdAt)}
                   </span>
                   {item.isPinned && (
                     <>
-                      <span className="text-[10px] text-[#444444]">•</span>
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-[#60cdff]">
+                      <span className="text-[10px] text-fg-faint">•</span>
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-accent">
                         <Pin size={9} /> Pinned
                       </span>
                     </>
@@ -205,8 +205,8 @@ export function ClipboardList({
                   type="button"
                   title="Pin"
                   className={clsx(
-                    "rounded p-1.5 transition hover:bg-[#333333]",
-                    item.isPinned ? "text-[#60cdff]" : "text-[#aaaaaa] hover:text-white"
+                    "rounded p-1.5 transition hover:bg-hover",
+                    item.isPinned ? "text-accent" : "text-fg-muted hover:text-fg"
                   )}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -218,7 +218,7 @@ export function ClipboardList({
                 <button
                   type="button"
                   title="Delete"
-                  className="rounded p-1.5 text-[#aaaaaa] transition hover:bg-[#333333] hover:text-[#ff6b6b]"
+                  className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-danger"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDelete(item.id);

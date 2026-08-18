@@ -18,6 +18,9 @@ export interface CaptureResult {
   monitorName: string;
 }
 
+export type { ThemeMode, AccentColor } from "./theme";
+import type { ThemeMode, AccentColor } from "./theme";
+
 export interface AppSettings {
   hotkeyClipboard: string;
   hotkeySnip: string;
@@ -27,7 +30,20 @@ export interface AppSettings {
   lastCleanup: number;
   /** Start with Windows / login — tray until hotkey */
   launchAtStartup: boolean;
+  themeMode: ThemeMode;
+  accentColor: AccentColor;
 }
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  hotkeyClipboard: "Control+Shift+V",
+  hotkeySnip: "Control+Shift+S",
+  clearOnBoot: false,
+  clearInterval: "never",
+  lastCleanup: 0,
+  launchAtStartup: false,
+  themeMode: "dark",
+  accentColor: "cyan",
+};
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";
 

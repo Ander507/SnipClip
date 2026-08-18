@@ -5,6 +5,79 @@
   --font-mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
 }
 
+/* Map CSS variables → Tailwind color utilities (bg-app, text-fg, border-line, …) */
+@theme inline {
+  --color-app: var(--sc-app);
+  --color-raised: var(--sc-raised);
+  --color-hover: var(--sc-hover);
+  --color-muted: var(--sc-muted);
+  --color-inset: var(--sc-inset);
+  --color-line: var(--sc-line);
+  --color-line-strong: var(--sc-line-strong);
+  --color-fg: var(--sc-fg);
+  --color-fg-secondary: var(--sc-fg-secondary);
+  --color-fg-muted: var(--sc-fg-muted);
+  --color-fg-faint: var(--sc-fg-faint);
+  --color-accent: var(--sc-accent);
+  --color-accent-fg: var(--sc-accent-fg);
+  --color-accent-soft: var(--sc-accent-soft);
+  --color-danger: var(--sc-danger);
+  --color-scroll: var(--sc-scroll);
+}
+
+:root,
+[data-theme="dark"] {
+  --sc-app: #202020;
+  --sc-raised: #191919;
+  --sc-hover: #2d2d2d;
+  --sc-muted: #252525;
+  --sc-inset: #121212;
+  --sc-line: #2d2d2d;
+  --sc-line-strong: #3d3d3d;
+  --sc-fg: #ffffff;
+  --sc-fg-secondary: #eeeeee;
+  --sc-fg-muted: #777777;
+  --sc-fg-faint: #666666;
+  --sc-danger: #ff6b6b;
+  --sc-scroll: #3d3d3d;
+  --sc-accent: #00e8c6;
+  --sc-accent-fg: #000000;
+  --sc-accent-soft: color-mix(in srgb, var(--sc-accent) 18%, transparent);
+}
+
+[data-theme="light"] {
+  --sc-app: #f3f3f3;
+  --sc-raised: #ffffff;
+  --sc-hover: #e8e8e8;
+  --sc-muted: #ececec;
+  --sc-inset: #fafafa;
+  --sc-line: #e0e0e0;
+  --sc-line-strong: #cfcfcf;
+  --sc-fg: #1a1a1a;
+  --sc-fg-secondary: #2a2a2a;
+  --sc-fg-muted: #6b6b6b;
+  --sc-fg-faint: #8a8a8a;
+  --sc-danger: #d13438;
+  --sc-scroll: #c4c4c4;
+}
+
+[data-accent="cyan"] {
+  --sc-accent: #00e8c6;
+  --sc-accent-fg: #000000;
+}
+[data-accent="purple"] {
+  --sc-accent: #c084fc;
+  --sc-accent-fg: #000000;
+}
+[data-accent="green"] {
+  --sc-accent: #4ade80;
+  --sc-accent-fg: #000000;
+}
+[data-accent="orange"] {
+  --sc-accent: #fb923c;
+  --sc-accent-fg: #000000;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -15,8 +88,8 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #202020;
-  color: #ffffff;
+  background: var(--sc-app);
+  color: var(--sc-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -40,13 +113,13 @@ body.snip-mode #root {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3d3d3d;
+  background: var(--sc-scroll);
   border-radius: 8px;
-  border: 2px solid #202020;
+  border: 2px solid var(--sc-app);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4a4a4a;
+  background: var(--sc-line-strong);
 }
 
 [data-tauri-drag-region] {
@@ -69,4 +142,8 @@ textarea,
 pre,
 code {
   user-select: text;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--sc-accent);
 }

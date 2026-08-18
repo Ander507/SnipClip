@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { listen, emitTo } from "@tauri-apps/api/event";
 import { SnipSelector } from "./components/SnipSelector";
-import { closeSnipper } from "./lib/api";
+import { closeSnipper, getSettings } from "./lib/api";
 import type { CaptureResult } from "./lib/types";
+import { applyTheme } from "./lib/theme";
 
 /**
  * Preloaded snipper window — translucent overlay, instant show via begin_snip.
@@ -14,6 +15,9 @@ export function SnipPage() {
     // Transparent shell so the desktop shows through
     document.documentElement.classList.add("snip-mode");
     document.body.classList.add("snip-mode");
+    void getSettings()
+      .then((s) => applyTheme(s.themeMode, s.accentColor))
+      .catch(console.error);
 
     let unlisten: (() => void) | undefined;
     void listen("snip-ready", () => {
