@@ -35,13 +35,13 @@ function formatTime(iso: string) {
 
 function TypeIcon({ type, isCode }: { type: string; isCode?: boolean }) {
   if (isCode) return <Code2 size={14} />;
-  if (type === "image") return <ImageIcon size={14} />;
+  if (type === "image" || type === "screenshot") return <ImageIcon size={14} />;
   if (type === "link") return <Link2 size={14} />;
   return <Type size={14} />;
 }
 
 function thumbSrc(item: ClipboardItem): string | null {
-  if (item.contentType !== "image") return null;
+  if (item.contentType !== "image" && item.contentType !== "screenshot") return null;
   if (item.preview?.startsWith("data:image")) return item.preview;
   if (item.content?.startsWith("data:image")) return item.content;
   return null;
@@ -126,7 +126,8 @@ export function ClipboardList({
           const textBody = item.content || item.preview || "";
           const lang = item.contentType === "text" ? detectLanguage(textBody) : "plain";
           const isCode = lang !== "plain";
-          const isImage = item.contentType === "image";
+          const isImage =
+            item.contentType === "image" || item.contentType === "screenshot";
 
           return (
             <div
@@ -166,9 +167,13 @@ export function ClipboardList({
               <div className="min-w-0 flex-1 pr-2">
                 {isImage ? (
                   <p className="truncate text-xs font-medium text-fg-secondary">
-                    {item.preview?.startsWith("data:")
-                      ? "Screenshot — click to preview"
-                      : item.preview || "Image"}
+                    {item.contentType === "screenshot"
+                      ? item.preview?.startsWith("data:")
+                        ? "Screenshot — click to preview"
+                        : item.preview || "Screenshot"
+                      : item.preview?.startsWith("data:")
+                        ? "Image — click to preview"
+                        : item.preview || "Image"}
                   </p>
                 ) : isCode ? (
                   <div className="my-0.5 overflow-hidden rounded-md border border-line bg-inset">
@@ -188,7 +193,11 @@ export function ClipboardList({
 
                 <div className="mt-1 flex items-center gap-2">
                   <span className="font-mono text-[10px] uppercase tracking-wider text-fg-muted">
-                    {isCode ? languageLabel(lang) : item.contentType}
+                    {isCode
+                      ? languageLabel(lang)
+                      : item.contentType === "screenshot"
+                        ? "screenshot"
+                        : item.contentType}
                   </span>
                   <span className="text-[10px] text-fg-faint">•</span>
                   <span className="font-mono text-[10px] text-fg-faint">

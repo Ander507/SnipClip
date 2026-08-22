@@ -14,6 +14,8 @@ static MONITORING: AtomicBool = AtomicBool::new(false);
 static PAUSED: AtomicBool = AtomicBool::new(false);
 static MAIN_UI_VISIBLE: AtomicBool = AtomicBool::new(true);
 static SUPPRESS_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+/// Set after history clear — monitor should resync seen clipboard without re-inserting.
+static RESYNC_SEEN: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static IGNORE_LIST: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
@@ -56,6 +58,12 @@ pub fn toggle_paused() -> bool {
 
 pub fn is_paused() -> bool {
     PAUSED.load(Ordering::SeqCst)
+}
+
+/// After clearing the vault, forget “already seen” clipboard so future copies are stored again.
+/// The next poll only resyncs seen hashes (no re-insert of whatever is currently on the clipboard).
+pub fn resync_seen_clipboard() {
+    RESYNC_SEEN.store(true, Ordering::SeqCst);
 }
 
 pub fn set_main_ui_visible(visible: bool) {
@@ -237,6 +245,16 @@ pub fn start_monitor(app: AppHandle) {
         loop {
             if !MONITORING.load(Ordering::SeqCst) {
                 break;
+            }
+
+            if RESYNC_SEEN.swap(false, Ordering::SeqCst) {
+                // Align with OS clipboard without writing into the vault again.
+                last_text = with_clipboard_retry(|c| c.get_text())
+                    .ok()
+                    .filter(|t| !t.is_empty());
+                last_image_hash = with_clipboard_retry(|c| c.get_image())
+                    .ok()
+                    .map(|img| image_content_hash(&img));
             }
 
             if is_suppressed() {

@@ -39,7 +39,7 @@
         "skipTaskbar": true,
         "visible": false,
         "resizable": false,
-        "fullscreen": true,
+        "fullscreen": false,
         "focus": false,
         "backgroundColor": "#00000000"
       }

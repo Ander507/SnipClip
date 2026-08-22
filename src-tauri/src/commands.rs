@@ -57,14 +57,17 @@ pub fn delete_item(db: State<'_, Arc<Database>>, id: i64) -> Result<(), String> 
 
 #[tauri::command]
 pub fn clear_history(db: State<'_, Arc<Database>>) -> Result<(), String> {
-    db.clear_unpinned()
+    db.clear_unpinned()?;
+    // So the next distinct copy is stored (monitor no longer treats OS clipboard as "already saved").
+    clipboard::resync_seen_clipboard();
+    Ok(())
 }
 
 #[tauri::command]
 pub fn copy_item(db: State<'_, Arc<Database>>, id: i64) -> Result<(), String> {
     let item = db.get(id)?.ok_or_else(|| "item not found".to_string())?;
     match item.content_type.as_str() {
-        "image" => clipboard::write_image_to_clipboard(&item.content),
+        "image" | "screenshot" => clipboard::write_image_to_clipboard(&item.content),
         _ => clipboard::write_text_to_clipboard(&item.content),
     }
 }
@@ -103,7 +106,20 @@ pub fn save_snip_to_vault(
 ) -> Result<ClipboardItem, String> {
     // Build a tiny preview thumbnail so list stays light
     let preview = build_thumb_preview(&data_url).unwrap_or_else(|_| format!("{width}×{height} snip"));
-    db.insert("image", &data_url, &preview)
+    db.insert("screenshot", &data_url, &preview).map(|item| item.for_event())
+}
+
+#[tauri::command]
+pub fn update_vault_image(
+    db: State<'_, Arc<Database>>,
+    id: i64,
+    data_url: String,
+    width: u32,
+    height: u32,
+) -> Result<ClipboardItem, String> {
+    let preview = build_thumb_preview(&data_url).unwrap_or_else(|_| format!("{width}×{height} snip"));
+    db.update_image_content(id, &data_url, &preview)
+        .map(|item| item.for_event())
 }
 
 fn build_thumb_preview(data_url: &str) -> Result<String, String> {
@@ -163,11 +179,12 @@ pub fn hide_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Instant show/focus of the preloaded translucent snipper — no pre-capture lag.
+/// Instant show/focus of the preloaded translucent snipper — covers all monitors.
 #[tauri::command]
 pub fn begin_snip(app: AppHandle) -> Result<(), String> {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use tauri::Emitter;
+    use tauri::{Emitter, Position, Size};
+    use tauri::{PhysicalPosition, PhysicalSize};
 
     static BUSY: AtomicBool = AtomicBool::new(false);
     if BUSY.swap(true, Ordering::SeqCst) {
@@ -189,9 +206,26 @@ pub fn begin_snip(app: AppHandle) -> Result<(), String> {
         }
     };
 
-    // Single synchronous dispatch — window webview is already warm
+    let desktop = match snip::virtual_desktop_bounds() {
+        Ok(d) => d,
+        Err(e) => {
+            BUSY.store(false, Ordering::SeqCst);
+            let _ = show_main_window(app);
+            return Err(e);
+        }
+    };
+
+    // Cover the full virtual desktop (all monitors), not just the primary fullscreen.
+    let _ = snipper.set_fullscreen(false);
     let _ = snipper.set_always_on_top(true);
-    let _ = snipper.set_fullscreen(true);
+    let _ = snipper.set_position(Position::Physical(PhysicalPosition::new(
+        desktop.x,
+        desktop.y,
+    )));
+    let _ = snipper.set_size(Size::Physical(PhysicalSize::new(
+        desktop.width,
+        desktop.height,
+    )));
     let _ = snipper.show();
     let _ = snipper.set_focus();
     let _ = snipper.emit("snip-ready", ());
@@ -231,6 +265,13 @@ pub fn get_settings(
             settings.launch_at_startup = enabled;
         }
     }
+    if let Some(ref bg) = settings.theme_background_image {
+        if !bg.starts_with("data:") {
+            if let Ok(resolved) = crate::themes::resolve_background_url(&app, bg) {
+                settings.theme_background_image = Some(resolved);
+            }
+        }
+    }
     Ok(settings)
 }
 
@@ -242,6 +283,13 @@ pub fn update_settings(
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
     hotkeys::apply_hotkeys(&app, &settings)?;
+    let mut settings = settings;
+    if let Some(ref bg) = settings.theme_background_image {
+        if bg.starts_with("data:image/") {
+            settings.theme_background_image =
+                Some(crate::themes::store_active_background(&app, bg)?);
+        }
+    }
     db.save_settings(&settings)?;
     clipboard::set_ignore_list(settings.ignore_list.clone());
 
@@ -255,6 +303,15 @@ pub fn update_settings(
                 .map_err(|e| format!("Failed to enable launch at startup: {e}"))?;
         } else {
             let _ = autolaunch.disable();
+        }
+    }
+
+    // Return settings with resolved background for live UI
+    if let Some(ref bg) = settings.theme_background_image {
+        if !bg.starts_with("data:") {
+            if let Ok(resolved) = crate::themes::resolve_background_url(&app, bg) {
+                settings.theme_background_image = Some(resolved);
+            }
         }
     }
 
@@ -317,4 +374,47 @@ pub fn copy_text_from_image(db: State<'_, Arc<Database>>, id: i64) -> Result<Str
 #[tauri::command]
 pub fn is_ocr_available() -> bool {
     crate::ocr::is_available()
+}
+
+#[tauri::command]
+pub fn list_theme_packs(app: AppHandle) -> Result<Vec<crate::themes::ThemePack>, String> {
+    crate::themes::list_theme_packs(&app)
+}
+
+#[tauri::command]
+pub fn save_theme_pack(
+    app: AppHandle,
+    pack: crate::themes::ThemePack,
+) -> Result<crate::themes::ThemePack, String> {
+    crate::themes::save_theme_pack(&app, pack)
+}
+
+#[tauri::command]
+pub fn delete_theme_pack(app: AppHandle, id: String) -> Result<(), String> {
+    crate::themes::delete_theme_pack(&app, &id)
+}
+
+#[tauri::command]
+pub fn export_theme_pack(app: AppHandle, id: String) -> Result<String, String> {
+    crate::themes::export_theme_pack_json(&app, &id)
+}
+
+#[tauri::command]
+pub fn import_theme_pack(app: AppHandle, json: String) -> Result<crate::themes::ThemePack, String> {
+    crate::themes::import_theme_pack_json(&app, &json)
+}
+
+#[tauri::command]
+pub fn read_image_as_data_url(path: String) -> Result<String, String> {
+    crate::themes::read_image_path_as_data_url(&path)
+}
+
+#[tauri::command]
+pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    crate::themes::write_text_file(&path, &contents)
+}
+
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    crate::themes::read_text_file(&path)
 }

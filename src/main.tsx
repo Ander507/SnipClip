@@ -11,6 +11,9 @@ if (isSnipMode) {
   document.body.classList.add("snip-mode");
 }
 
+// Disable the WebView / Edge right-click menu in the desktop shell
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {isSnipMode ? <SnipPage /> : <App />}

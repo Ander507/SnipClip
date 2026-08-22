@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use image::{imageops, ImageEncoder};
+use image::{imageops, ImageBuffer, ImageEncoder, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use xcap::Monitor;
@@ -11,6 +11,15 @@ pub struct CaptureResult {
     pub width: u32,
     pub height: u32,
     pub monitor_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VirtualDesktop {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 fn encode_rgba(img: &image::RgbaImage) -> Result<String, String> {
@@ -28,6 +37,37 @@ fn encode_rgba(img: &image::RgbaImage) -> Result<String, String> {
         "data:image/png;base64,{}",
         B64.encode(buf.into_inner())
     ))
+}
+
+/// Union of all monitor bounds in physical desktop coordinates.
+pub fn virtual_desktop_bounds() -> Result<VirtualDesktop, String> {
+    let monitors = Monitor::all().map_err(|e| e.to_string())?;
+    if monitors.is_empty() {
+        return Err("no monitors found".into());
+    }
+
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
+
+    for m in &monitors {
+        let mx = m.x();
+        let my = m.y();
+        let mw = m.width() as i32;
+        let mh = m.height() as i32;
+        min_x = min_x.min(mx);
+        min_y = min_y.min(my);
+        max_x = max_x.max(mx + mw);
+        max_y = max_y.max(my + mh);
+    }
+
+    Ok(VirtualDesktop {
+        x: min_x,
+        y: min_y,
+        width: (max_x - min_x).max(1) as u32,
+        height: (max_y - min_y).max(1) as u32,
+    })
 }
 
 pub fn capture_primary_monitor() -> Result<CaptureResult, String> {
@@ -52,6 +92,7 @@ pub fn capture_primary_monitor() -> Result<CaptureResult, String> {
 }
 
 /// Capture a screen region using physical pixel coordinates (absolute desktop space).
+/// Supports selections that span multiple monitors by stitching monitor captures.
 pub fn capture_screen_region(
     x: i32,
     y: i32,
@@ -67,38 +108,83 @@ pub fn capture_screen_region(
         return Err("no monitors found".into());
     }
 
-    // Prefer the monitor that contains the selection origin.
-    let monitor = monitors
-        .iter()
-        .find(|m| {
-            let mx = m.x();
-            let my = m.y();
-            let mw = m.width() as i32;
-            let mh = m.height() as i32;
-            x >= mx && y >= my && x < mx + mw && y < my + mh
-        })
-        .unwrap_or(&monitors[0]);
+    let sel_r = x.saturating_add(width as i32);
+    let sel_b = y.saturating_add(height as i32);
 
-    let name = monitor.name().to_string();
-    let mx = monitor.x();
-    let my = monitor.y();
-    let img = monitor.capture_image().map_err(|e| e.to_string())?;
+    let mut canvas: RgbaImage = ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 255]));
+    let mut names: Vec<String> = Vec::new();
+    let mut pasted = false;
 
-    let local_x = (x - mx).max(0) as u32;
-    let local_y = (y - my).max(0) as u32;
-    let max_w = img.width().saturating_sub(local_x);
-    let max_h = img.height().saturating_sub(local_y);
-    let w = width.min(max_w).max(1);
-    let h = height.min(max_h).max(1);
+    for monitor in &monitors {
+        let mx = monitor.x();
+        let my = monitor.y();
+        let mw = monitor.width() as i32;
+        let mh = monitor.height() as i32;
+        let mr = mx + mw;
+        let mb = my + mh;
 
-    let cropped = imageops::crop_imm(&img, local_x, local_y, w, h).to_image();
-    let data_url = encode_rgba(&cropped)?;
+        let ix1 = x.max(mx);
+        let iy1 = y.max(my);
+        let ix2 = sel_r.min(mr);
+        let iy2 = sel_b.min(mb);
+        if ix2 <= ix1 || iy2 <= iy1 {
+            continue;
+        }
+
+        let img = monitor.capture_image().map_err(|e| e.to_string())?;
+        let local_x = (ix1 - mx).max(0) as u32;
+        let local_y = (iy1 - my).max(0) as u32;
+        let crop_w = ((ix2 - ix1) as u32)
+            .min(img.width().saturating_sub(local_x))
+            .max(1);
+        let crop_h = ((iy2 - iy1) as u32)
+            .min(img.height().saturating_sub(local_y))
+            .max(1);
+
+        let cropped = imageops::crop_imm(&img, local_x, local_y, crop_w, crop_h).to_image();
+        let dest_x = (ix1 - x).max(0) as i64;
+        let dest_y = (iy1 - y).max(0) as i64;
+        imageops::overlay(&mut canvas, &cropped, dest_x, dest_y);
+
+        names.push(monitor.name().to_string());
+        pasted = true;
+    }
+
+    if !pasted {
+        // Fallback: single-monitor crop from first display (legacy path)
+        let monitor = &monitors[0];
+        let name = monitor.name().to_string();
+        let mx = monitor.x();
+        let my = monitor.y();
+        let img = monitor.capture_image().map_err(|e| e.to_string())?;
+        let local_x = (x - mx).max(0) as u32;
+        let local_y = (y - my).max(0) as u32;
+        let max_w = img.width().saturating_sub(local_x);
+        let max_h = img.height().saturating_sub(local_y);
+        let w = width.min(max_w).max(1);
+        let h = height.min(max_h).max(1);
+        let cropped = imageops::crop_imm(&img, local_x, local_y, w, h).to_image();
+        let data_url = encode_rgba(&cropped)?;
+        return Ok(CaptureResult {
+            data_url,
+            width: cropped.width(),
+            height: cropped.height(),
+            monitor_name: name,
+        });
+    }
+
+    let data_url = encode_rgba(&canvas)?;
+    let monitor_name = if names.len() == 1 {
+        names[0].clone()
+    } else {
+        format!("{} monitors", names.len())
+    };
 
     Ok(CaptureResult {
         data_url,
-        width: cropped.width(),
-        height: cropped.height(),
-        monitor_name: name,
+        width: canvas.width(),
+        height: canvas.height(),
+        monitor_name,
     })
 }
 

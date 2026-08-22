@@ -23,7 +23,7 @@ impl ClipboardItem {
     /// Strip heavy image payloads before emitting to the frontend.
     pub fn for_event(&self) -> Self {
         let mut clone = self.clone();
-        if clone.content_type == "image" {
+        if clone.content_type == "image" || clone.content_type == "screenshot" {
             clone.content = String::new();
         }
         clone
@@ -56,6 +56,14 @@ pub struct AppSettings {
     pub theme_use_custom: bool,
     #[serde(default)]
     pub theme_custom: Option<serde_json::Value>,
+    #[serde(default)]
+    pub theme_glassmorphic: bool,
+    /// 0–100 surface translucency
+    #[serde(default)]
+    pub theme_translucency: u8,
+    /// data URL or theme-bg relative filename
+    #[serde(default)]
+    pub theme_background_image: Option<String>,
     /// Process names whose clipboard writes are not stored (e.g. "WhisperFlow.exe").
     #[serde(default)]
     pub ignore_list: Vec<String>,
@@ -74,6 +82,9 @@ impl Default for AppSettings {
             accent_color: "cyan".to_string(),
             theme_use_custom: false,
             theme_custom: None,
+            theme_glassmorphic: false,
+            theme_translucency: 0,
+            theme_background_image: None,
             ignore_list: Vec::new(),
         }
     }
@@ -128,6 +139,8 @@ impl Database {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let conn = Connection::open(path).map_err(|e| e.to_string())?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| e.to_string())?;
         conn.execute_batch(
             "
             PRAGMA journal_mode = WAL;
@@ -249,6 +262,18 @@ impl Database {
         let theme_custom = self
             .get_setting("theme_custom")?
             .and_then(|raw| serde_json::from_str(&raw).ok());
+        let theme_glassmorphic = self
+            .get_setting("theme_glassmorphic")?
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let theme_translucency = self
+            .get_setting("theme_translucency")?
+            .and_then(|v| v.parse::<u8>().ok())
+            .unwrap_or(0)
+            .min(100);
+        let theme_background_image = self
+            .get_setting("theme_background_image")?
+            .filter(|s| !s.is_empty());
         let ignore_list = self
             .get_setting("ignore_list")?
             .map(parse_ignore_list)
@@ -268,6 +293,9 @@ impl Database {
             accent_color,
             theme_use_custom,
             theme_custom,
+            theme_glassmorphic,
+            theme_translucency,
+            theme_background_image,
             ignore_list,
         })
     }
@@ -311,6 +339,18 @@ impl Database {
         } else {
             self.set_setting("theme_custom", "")?;
         }
+        self.set_setting(
+            "theme_glassmorphic",
+            if settings.theme_glassmorphic { "1" } else { "0" },
+        )?;
+        self.set_setting(
+            "theme_translucency",
+            &settings.theme_translucency.min(100).to_string(),
+        )?;
+        self.set_setting(
+            "theme_background_image",
+            settings.theme_background_image.as_deref().unwrap_or(""),
+        )?;
         let ignore = normalize_ignore_list(settings.ignore_list.clone());
         let ignore_json =
             serde_json::to_string(&ignore).unwrap_or_else(|_| "[]".to_string());
@@ -365,6 +405,7 @@ impl Database {
         if should_clear {
             self.clear_unpinned()?;
             self.set_setting("last_cleanup", &now.to_string())?;
+            crate::clipboard::resync_seen_clipboard();
         } else if settings.last_cleanup == 0 {
             self.set_setting("last_cleanup", &now.to_string())?;
         }
@@ -410,15 +451,17 @@ impl Database {
 
         let id = conn.last_insert_rowid();
 
-        conn.execute(
+        if let Err(e) = conn.execute(
             "DELETE FROM items WHERE id IN (
                 SELECT id FROM items WHERE is_pinned = 0
                 ORDER BY created_at DESC
                 LIMIT -1 OFFSET ?1
             )",
             params![MAX_HISTORY as i64],
-        )
-        .map_err(|e| e.to_string())?;
+        ) {
+            // Row is already inserted — don't fail the whole write or the UI never sees it.
+            eprintln!("history trim skipped: {e}");
+        }
 
         Ok(ClipboardItem {
             id,
@@ -428,6 +471,27 @@ impl Database {
             is_pinned: false,
             created_at: created_at_str,
         })
+    }
+
+    pub fn update_image_content(
+        &self,
+        id: i64,
+        content: &str,
+        preview: &str,
+    ) -> Result<ClipboardItem, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let updated = conn
+            .execute(
+                "UPDATE items SET content = ?1, preview = ?2 WHERE id = ?3 AND content_type IN ('image', 'screenshot')",
+                params![content, preview, id],
+            )
+            .map_err(|e| e.to_string())?;
+        if updated == 0 {
+            return Err("item not found".into());
+        }
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| "item not found".to_string())
     }
 
     pub fn list(
@@ -440,7 +504,7 @@ impl Database {
         // Omit full image blobs from list payloads — preview holds a tiny thumbnail.
         let mut sql = String::from(
             "SELECT id, content_type,
-                CASE WHEN content_type = 'image' THEN '' ELSE content END,
+                CASE WHEN content_type IN ('image', 'screenshot') THEN '' ELSE content END,
                 preview, is_pinned, created_at
              FROM items WHERE 1=1",
         );
@@ -456,6 +520,10 @@ impl Database {
                     sql.push_str(" AND content_type = ?");
                     binds.push(Box::new("image".to_string()));
                 }
+                "screenshots" => {
+                    sql.push_str(" AND content_type = ?");
+                    binds.push(Box::new("screenshot".to_string()));
+                }
                 "links" => {
                     sql.push_str(" AND content_type = ?");
                     binds.push(Box::new("link".to_string()));
@@ -469,7 +537,7 @@ impl Database {
 
         if let Some(q) = query {
             if !q.trim().is_empty() {
-                sql.push_str(" AND (preview LIKE ? ESCAPE '\\' OR (content_type != 'image' AND content LIKE ? ESCAPE '\\'))");
+                sql.push_str(" AND (preview LIKE ? ESCAPE '\\' OR (content_type NOT IN ('image', 'screenshot') AND content LIKE ? ESCAPE '\\'))");
                 let pattern = format!("%{}%", escape_like(q.trim()));
                 binds.push(Box::new(pattern.clone()));
                 binds.push(Box::new(pattern));
@@ -549,8 +617,20 @@ impl Database {
 
     pub fn clear_unpinned(&self) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM items WHERE is_pinned = 0", [])
-            .map_err(|e| e.to_string())?;
+        // Batch deletes so a vault full of large images doesn't lock the DB in one huge statement.
+        loop {
+            let deleted = conn
+                .execute(
+                    "DELETE FROM items WHERE id IN (
+                        SELECT id FROM items WHERE is_pinned = 0 LIMIT 100
+                    )",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+            if deleted == 0 {
+                break;
+            }
+        }
         Ok(())
     }
 }

@@ -21,6 +21,7 @@ import {
   toggleClipboardPaused,
   copyTextFromImage,
   isOcrAvailable,
+  saveSnipToVault,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
@@ -83,6 +84,9 @@ function App() {
           ignoreList: s.ignoreList ?? [],
           themeUseCustom: s.themeUseCustom ?? false,
           themeCustom: s.themeCustom ?? null,
+          themeGlassmorphic: s.themeGlassmorphic ?? false,
+          themeTranslucency: s.themeTranslucency ?? 0,
+          themeBackgroundImage: s.themeBackgroundImage ?? null,
         };
         setSettings(next);
         applyTheme(next);
@@ -130,9 +134,29 @@ function App() {
       setClipboardPaused(Boolean(event.payload));
     }).then((u) => unsubs.push(u));
 
-    // Cropped region finished in the snipper window
+    // Cropped region finished in the snipper window — always vault as Screenshots
     void listen<CaptureResult>("snip-complete", (event) => {
-      setCapture(event.payload);
+      const result = event.payload;
+      if (!result) return;
+      void (async () => {
+        let vaultId: number | undefined;
+        try {
+          const item = await saveSnipToVault(result.dataUrl, result.width, result.height);
+          vaultId = item.id;
+          const cat = categoryRef.current;
+          const q = debouncedQueryRef.current;
+          if (itemMatchesCategory(item, cat) && itemMatchesSearch(item, q)) {
+            setItems((prev) => {
+              const base = Array.isArray(prev) ? prev : [];
+              return [item, ...base.filter((i) => i.id !== item.id)].slice(0, 500);
+            });
+            setSelectedId(item.id);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+        setCapture({ ...result, vaultId });
+      })();
     }).then((u) => unsubs.push(u));
 
     return () => unsubs.forEach((u) => u());
@@ -186,11 +210,17 @@ function App() {
 
   async function handleClear() {
     try {
+      closeImagePreview();
+      setCapture(null);
+      setQuery("");
+      setItems([]);
+      setSelectedId(null);
       await clearHistory();
       await refresh();
       setStatus("History cleared", 1400);
     } catch (err) {
       setStatus(String(err), 1600);
+      await refresh();
     }
   }
 
@@ -235,6 +265,7 @@ function App() {
         width: size.width,
         height: size.height,
         monitorName: "vault",
+        vaultId: previewId ?? undefined,
       });
     } catch (err) {
       setStatus(String(err), 1600);

@@ -51,8 +51,23 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.accentColor !== b.accentColor ||
     a.themeUseCustom !== b.themeUseCustom ||
     JSON.stringify(a.themeCustom) !== JSON.stringify(b.themeCustom) ||
+    a.themeGlassmorphic !== b.themeGlassmorphic ||
+    a.themeTranslucency !== b.themeTranslucency ||
+    a.themeBackgroundImage !== b.themeBackgroundImage ||
     a.ignoreList.join("\0") !== b.ignoreList.join("\0")
   );
+}
+
+function normalizeSettings(s: AppSettings): AppSettings {
+  return {
+    ...s,
+    ignoreList: s.ignoreList ?? [],
+    themeUseCustom: s.themeUseCustom ?? false,
+    themeCustom: s.themeCustom ?? null,
+    themeGlassmorphic: s.themeGlassmorphic ?? false,
+    themeTranslucency: s.themeTranslucency ?? 0,
+    themeBackgroundImage: s.themeBackgroundImage ?? null,
+  };
 }
 
 export function SettingsView({ onClose, onSaved }: Props) {
@@ -76,12 +91,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
 
   useEffect(() => {
     void getSettings().then((s) => {
-      const next = {
-        ...s,
-        ignoreList: s.ignoreList ?? [],
-        themeUseCustom: s.themeUseCustom ?? false,
-        themeCustom: s.themeCustom ?? null,
-      };
+      const next = normalizeSettings(s);
       setSettings(next);
       setDraft(next);
     });
@@ -116,7 +126,8 @@ export function SettingsView({ onClose, onSaved }: Props) {
 
   useEffect(() => {
     if (!draft) return;
-    applyTheme(draft);
+    const handle = window.setTimeout(() => applyTheme(draft), 50);
+    return () => window.clearTimeout(handle);
   }, [draft]);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {

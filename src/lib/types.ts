@@ -1,6 +1,6 @@
-export type ContentType = "text" | "image" | "link";
+export type ContentType = "text" | "image" | "link" | "screenshot";
 
-export type Category = "all" | "text" | "images" | "links" | "pinned";
+export type Category = "all" | "text" | "images" | "screenshots" | "links" | "pinned";
 
 export interface ClipboardItem {
   id: number;
@@ -16,6 +16,8 @@ export interface CaptureResult {
   width: number;
   height: number;
   monitorName: string;
+  /** Set when auto-saved to the Screenshots vault on snip complete. */
+  vaultId?: number;
 }
 
 export type { ThemeMode, AccentColor, ThemeCustomColors } from "./theme";
@@ -35,6 +37,11 @@ export interface AppSettings {
   /** When true, `themeCustom` overrides preset CSS variables. */
   themeUseCustom: boolean;
   themeCustom: ThemeCustomColors | null;
+  themeGlassmorphic: boolean;
+  /** 0–100 */
+  themeTranslucency: number;
+  /** data URL (resolved) or null */
+  themeBackgroundImage: string | null;
   /** Process names whose copies are not stored (e.g. WhisperFlow.exe). */
   ignoreList: string[];
 }
@@ -50,6 +57,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   accentColor: "cyan",
   themeUseCustom: false,
   themeCustom: null,
+  themeGlassmorphic: false,
+  themeTranslucency: 0,
+  themeBackgroundImage: null,
   ignoreList: [],
 };
 

@@ -148,12 +148,82 @@ export interface ThemeApplyInput {
   accentColor: AccentColor;
   themeUseCustom?: boolean;
   themeCustom?: ThemeCustomColors | null;
+  themeGlassmorphic?: boolean;
+  themeTranslucency?: number;
+  themeBackgroundImage?: string | null;
 }
+
+export interface ThemePack {
+  id: string;
+  name: string;
+  themeMode: string;
+  accentColor: string;
+  colors?: ThemeCustomColors | null;
+  glassmorphic: boolean;
+  translucency: number;
+  backgroundImage?: string | null;
+  createdAt: string;
+}
+
+const SURFACE_KEYS: ThemeTokenKey[] = ["app", "raised", "hover", "muted", "inset"];
 
 function clearCustomVars(root: HTMLElement) {
   for (const cssVar of Object.values(THEME_CSS_VARS)) {
     root.style.removeProperty(cssVar);
   }
+}
+
+function parseHex(hex: string): [number, number, number] | null {
+  const raw = hex.trim().replace(/^#/, "");
+  if (/^[0-9a-fA-F]{3}$/.test(raw)) {
+    return [
+      parseInt(raw[0] + raw[0], 16),
+      parseInt(raw[1] + raw[1], 16),
+      parseInt(raw[2] + raw[2], 16),
+    ];
+  }
+  if (/^[0-9a-fA-F]{6}/.test(raw)) {
+    return [
+      parseInt(raw.slice(0, 2), 16),
+      parseInt(raw.slice(2, 4), 16),
+      parseInt(raw.slice(4, 6), 16),
+    ];
+  }
+  return null;
+}
+
+/** Apply alpha to a hex (or passthrough if already rgba / unparsable). */
+function withAlpha(color: string, alpha: number): string {
+  if (alpha >= 0.999) return color;
+  const rgb = parseHex(color);
+  if (!rgb) return color;
+  const a = Math.round(Math.min(1, Math.max(0, alpha)) * 1000) / 1000;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`;
+}
+
+const THEME_BG_ID = "sc-theme-bg";
+let lastThemeBg: string | null = null;
+
+/** Paint wallpaper on a fixed layer so large data-URLs don't break CSS vars. */
+function syncThemeBackground(dataUrl: string | null | undefined) {
+  if (typeof document === "undefined") return;
+  const next = dataUrl || null;
+  if (next === lastThemeBg) return;
+  lastThemeBg = next;
+
+  let el = document.getElementById(THEME_BG_ID);
+  if (!next) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = THEME_BG_ID;
+    el.setAttribute("aria-hidden", "true");
+    document.body.prepend(el);
+  }
+  // JSON.stringify quotes safely for url(...)
+  el.style.backgroundImage = `url(${JSON.stringify(next)})`;
 }
 
 /** Apply theme to <html> so CSS variables (and Tailwind tokens) update globally. */
@@ -170,13 +240,41 @@ export function applyTheme(
   root.dataset.theme = settings.themeMode;
   root.dataset.accent = settings.accentColor;
 
-  if (settings.themeUseCustom && settings.themeCustom) {
-    for (const [key, cssVar] of Object.entries(THEME_CSS_VARS) as [
-      ThemeTokenKey,
-      string,
-    ][]) {
-      const value = settings.themeCustom[key];
-      if (value) root.style.setProperty(cssVar, value);
+  const glass = Boolean(settings.themeGlassmorphic);
+  const translucency = Math.min(100, Math.max(0, settings.themeTranslucency ?? 0));
+  const bg = settings.themeBackgroundImage || null;
+  const effectsOn = glass || translucency > 0 || Boolean(bg);
+
+  root.dataset.glass = glass ? "true" : "false";
+  if (bg) root.dataset.bgImage = "true";
+  else delete root.dataset.bgImage;
+
+  // 0% → fully opaque; 100% → ~28% opaque panels. Glass alone still softens.
+  let panelAlpha = 1 - (translucency / 100) * 0.72;
+  if (glass) panelAlpha = Math.min(panelAlpha, bg ? 0.62 : 0.78);
+  if (!effectsOn) panelAlpha = 1;
+  const appAlpha = effectsOn ? Math.min(panelAlpha, bg ? 0.55 : panelAlpha) : 1;
+
+  root.style.setProperty("--sc-translucency", String(translucency));
+  root.style.setProperty("--sc-surface-alpha", String(panelAlpha));
+
+  syncThemeBackground(bg);
+
+  const base = getPresetThemeColors(settings.themeMode, settings.accentColor);
+  const colors: ThemeCustomColors =
+    settings.themeUseCustom && settings.themeCustom
+      ? { ...base, ...settings.themeCustom }
+      : base;
+
+  if (settings.themeUseCustom || effectsOn) {
+    for (const key of Object.keys(THEME_CSS_VARS) as ThemeTokenKey[]) {
+      const solid = colors[key] || base[key];
+      let value = solid;
+      if (SURFACE_KEYS.includes(key) && effectsOn) {
+        const alpha = key === "app" ? appAlpha : panelAlpha;
+        value = withAlpha(solid, alpha);
+      }
+      root.style.setProperty(THEME_CSS_VARS[key], value);
     }
   } else {
     clearCustomVars(root);
@@ -186,4 +284,22 @@ export function applyTheme(
 export function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
+}
+
+export function settingsToThemePack(
+  name: string,
+  settings: ThemeApplyInput & { themeCustom?: ThemeCustomColors | null },
+  id = ""
+): ThemePack {
+  return {
+    id,
+    name,
+    themeMode: settings.themeMode,
+    accentColor: settings.accentColor,
+    colors: settings.themeUseCustom ? settings.themeCustom ?? null : null,
+    glassmorphic: Boolean(settings.themeGlassmorphic),
+    translucency: settings.themeTranslucency ?? 0,
+    backgroundImage: settings.themeBackgroundImage ?? null,
+    createdAt: "",
+  };
 }

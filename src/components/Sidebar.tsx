@@ -8,6 +8,7 @@ import {
   Trash2,
   Camera,
   Settings,
+  Aperture,
 } from "lucide-react";
 import type { Category } from "../lib/types";
 
@@ -15,6 +16,7 @@ const NAV: { id: Category; label: string; icon: typeof LayoutGrid }[] = [
   { id: "all", label: "All", icon: LayoutGrid },
   { id: "text", label: "Text", icon: Type },
   { id: "images", label: "Images", icon: ImageIcon },
+  { id: "screenshots", label: "Screenshots", icon: Aperture },
   { id: "links", label: "Links", icon: Link2 },
   { id: "pinned", label: "Pinned", icon: Pin },
 ];

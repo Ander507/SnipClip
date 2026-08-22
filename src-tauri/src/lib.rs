@@ -5,6 +5,7 @@ mod db;
 mod hotkeys;
 mod ocr;
 mod snip;
+mod themes;
 
 use db::Database;
 use hotkeys::HotkeyState;
@@ -36,6 +37,7 @@ pub fn run() {
             commands::save_snip,
             commands::copy_image,
             commands::save_snip_to_vault,
+            commands::update_vault_image,
             commands::toggle_main_window,
             commands::show_main_window,
             commands::hide_main_window,
@@ -51,6 +53,14 @@ pub fn run() {
             commands::get_running_apps,
             commands::copy_text_from_image,
             commands::is_ocr_available,
+            commands::list_theme_packs,
+            commands::save_theme_pack,
+            commands::delete_theme_pack,
+            commands::export_theme_pack,
+            commands::import_theme_pack,
+            commands::read_image_as_data_url,
+            commands::write_text_file,
+            commands::read_text_file,
         ])
         .setup(|app| {
             #[cfg(desktop)]

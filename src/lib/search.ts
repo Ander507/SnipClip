@@ -4,7 +4,7 @@ import type { ClipboardItem } from "./types";
 export function itemMatchesSearch(item: ClipboardItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  if (item.contentType === "image") {
+  if (item.contentType === "image" || item.contentType === "screenshot") {
     return item.preview.toLowerCase().includes(q);
   }
   return (
@@ -20,6 +20,7 @@ export function itemMatchesCategory(
   if (category === "all") return true;
   if (category === "text") return item.contentType === "text";
   if (category === "images") return item.contentType === "image";
+  if (category === "screenshots") return item.contentType === "screenshot";
   if (category === "links") return item.contentType === "link";
   if (category === "pinned") return item.isPinned;
   return true;

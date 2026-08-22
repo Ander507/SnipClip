@@ -162,6 +162,10 @@ The snipper is a **second, preloaded transparent window** kept warm at startup. 
 
 Annotations (including blur) run on an **HTML canvas in image-pixel space**, so zoom/pan don’t weaken redaction. The vault list is virtualized so long histories stay light — image rows keep thumbnails; full blobs load only for preview / re-edit.
 
+## Support
+
+If SnipClip saves you time, you can [buy me a white Monster](https://ko-fi.com/ander507) 🤍
+
 ## Credits
 
 Built with [Tauri](https://tauri.app/), [React](https://react.dev/), [Tailwind CSS](https://tailwindcss.com/), [rusqlite](https://github.com/rusqlite/rusqlite), [arboard](https://github.com/1Password/arboard), [xcap](https://github.com/nashaofu/xcap), and [Lucide](https://lucide.dev/).

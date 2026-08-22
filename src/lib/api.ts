@@ -62,6 +62,49 @@ export function saveSnipToVault(
   return invoke("save_snip_to_vault", { dataUrl, width, height });
 }
 
+export function updateVaultImage(
+  id: number,
+  dataUrl: string,
+  width: number,
+  height: number
+): Promise<ClipboardItem> {
+  return invoke("update_vault_image", { id, dataUrl, width, height });
+}
+
+export function listThemePacks(): Promise<import("./theme").ThemePack[]> {
+  return invoke("list_theme_packs");
+}
+
+export function saveThemePack(
+  pack: import("./theme").ThemePack
+): Promise<import("./theme").ThemePack> {
+  return invoke("save_theme_pack", { pack });
+}
+
+export function deleteThemePack(id: string): Promise<void> {
+  return invoke("delete_theme_pack", { id });
+}
+
+export function exportThemePack(id: string): Promise<string> {
+  return invoke("export_theme_pack", { id });
+}
+
+export function importThemePack(json: string): Promise<import("./theme").ThemePack> {
+  return invoke("import_theme_pack", { json });
+}
+
+export function readImageAsDataUrl(path: string): Promise<string> {
+  return invoke("read_image_as_data_url", { path });
+}
+
+export function writeTextFilePath(path: string, contents: string): Promise<void> {
+  return invoke("write_text_file", { path, contents });
+}
+
+export function readTextFilePath(path: string): Promise<string> {
+  return invoke("read_text_file", { path });
+}
+
 export function hideMainWindow(): Promise<void> {
   return invoke("hide_main_window");
 }

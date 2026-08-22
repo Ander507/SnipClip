@@ -20,8 +20,7 @@ import {
 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { AnnotateTool, CaptureResult } from "../lib/types";
-import { copyImage, saveSnip, saveSnipToVault } from "../lib/api";
-import { cssVar } from "../lib/theme";
+import { copyImage, saveSnip, saveSnipToVault, updateVaultImage } from "../lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 
 interface Props {
@@ -371,8 +370,15 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
     layoutRef.current = layout;
     const { ax, ay, scale, aw, ah } = layout;
 
-    ctx.fillStyle = cssVar("--sc-inset", "#121212");
+    // Always opaque — theme translucency/glass would leave trails on redraw
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#121212";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
     ctx.drawImage(img, 0, 0, capture.width, capture.height, ax, ay, aw, ah);
 
     ctx.save();
@@ -677,17 +683,25 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
     return { dataUrl: off.toDataURL("image/png"), w: off.width, h: off.height };
   }
 
+  async function persistAnnotated(dataUrl: string, w: number, h: number) {
+    if (capture.vaultId != null) {
+      await updateVaultImage(capture.vaultId, dataUrl, w, h);
+      return;
+    }
+    try {
+      await saveSnipToVault(dataUrl, w, h);
+    } catch (err) {
+      if (!String(err).toLowerCase().includes("duplicate")) throw err;
+    }
+  }
+
   async function handleCopy() {
     setBusy(true);
     try {
       const out = await exportAnnotated();
       if (!out) return;
       await copyImage(out.dataUrl);
-      try {
-        await saveSnipToVault(out.dataUrl, out.w, out.h);
-      } catch (err) {
-        if (!String(err).toLowerCase().includes("duplicate")) throw err;
-      }
+      await persistAnnotated(out.dataUrl, out.w, out.h);
       showToast("Copied to clipboard");
       onSaved();
       toastTimerRef.current = window.setTimeout(onClose, 450);
@@ -709,11 +723,7 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
       });
       if (path) {
         await saveSnip(out.dataUrl, path);
-        try {
-          await saveSnipToVault(out.dataUrl, out.w, out.h);
-        } catch (err) {
-          if (!String(err).toLowerCase().includes("duplicate")) throw err;
-        }
+        await persistAnnotated(out.dataUrl, out.w, out.h);
         showToast("Saved");
         onSaved();
         toastTimerRef.current = window.setTimeout(onClose, 450);
@@ -730,7 +740,11 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
   const showFillControls = FILL_TOOLS.includes(tool);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col">
+    <div
+      data-snip-editor
+      className="fixed inset-0 z-[200] flex flex-col"
+      style={{ backgroundColor: "#121212" }}
+    >
       <canvas
         ref={canvasRef}
         className={clsx(
@@ -749,7 +763,10 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
         onContextMenu={(e) => e.preventDefault()}
       />
 
-      <div className="pointer-events-auto absolute left-1/2 top-5 z-10 flex -translate-x-1/2 select-none items-center gap-3 rounded-lg border border-line bg-raised px-3 py-2 text-[11px] text-fg-secondary">
+      <div
+        className="pointer-events-auto absolute left-1/2 top-5 z-10 flex -translate-x-1/2 select-none items-center gap-3 rounded-lg border border-line px-3 py-2 text-[11px] text-fg-secondary"
+        style={{ backgroundColor: "#1a1a1a" }}
+      >
         {showBlurControls && (
           <>
             <div className="flex items-center gap-2">
@@ -826,7 +843,10 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
         Zoom: {Math.round(zoomLevel * 100)}% · Scroll to zoom · Shift-drag to pan
       </div>
 
-      <div className="pointer-events-auto absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-line bg-app p-1.5 shadow-xl">
+      <div
+        className="pointer-events-auto absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-line p-1.5 shadow-xl"
+        style={{ backgroundColor: "#1a1a1a" }}
+      >
         {TOOLS.map(({ id, icon: Icon, label }) => (
           <button
             key={id}
@@ -910,7 +930,10 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
       </div>
 
       {tool === "eyedropper" && hoverColor && (
-        <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex -translate-x-1/2 items-center gap-2 rounded-md border border-line bg-app px-3 py-1.5 font-mono text-[12px] text-fg-secondary">
+        <div
+          className="pointer-events-none absolute left-1/2 top-16 z-20 flex -translate-x-1/2 items-center gap-2 rounded-md border border-line px-3 py-1.5 font-mono text-[12px] text-fg-secondary"
+          style={{ backgroundColor: "#1a1a1a" }}
+        >
           <span
             className="h-4 w-4 rounded-sm border border-white/20"
             style={{ backgroundColor: hoverColor }}
@@ -921,7 +944,10 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
       )}
 
       {toast && (
-        <div className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-md border border-line bg-app px-4 py-1.5 text-[12px] text-accent">
+        <div
+          className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-md border border-line px-4 py-1.5 text-[12px] text-accent"
+          style={{ backgroundColor: "#1a1a1a" }}
+        >
           {toast}
         </div>
       )}

@@ -151,7 +151,7 @@ export function SnipSelector({ active, onCaptured, onCancel }: Props) {
       )}
 
       <div className="pointer-events-none absolute bottom-8 left-1/2 -translate-x-1/2 rounded-md border border-white/10 bg-black/50 px-4 py-2 text-[12px] text-white/90">
-        Drag to select · Esc to cancel
+        Drag to select on any screen · Esc to cancel
       </div>
 
       {error && (

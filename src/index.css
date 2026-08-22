@@ -88,11 +88,58 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: var(--sc-app);
+  background-color: var(--sc-app);
   color: var(--sc-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   user-select: none;
+}
+
+/* Fixed wallpaper layer (set from applyTheme via #sc-theme-bg) */
+#sc-theme-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: transparent;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Let the wallpaper show through translucent --sc-* colors */
+html[data-bg-image="true"],
+html[data-bg-image="true"] body,
+html[data-bg-image="true"] #root,
+html[data-glass="true"] body,
+html[data-glass="true"] #root {
+  background-color: transparent;
+}
+
+/* Glassmorphic panels — blur whatever is behind (wallpaper / translucent stack) */
+html[data-glass="true"] .bg-raised,
+html[data-glass="true"] .bg-app,
+html[data-glass="true"] .bg-muted,
+html[data-glass="true"] .bg-inset,
+html[data-glass="true"] .bg-hover {
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+}
+
+/* Snip annotation editor — never inherit glass/translucency (causes canvas trails) */
+[data-snip-editor],
+[data-snip-editor] .bg-raised,
+[data-snip-editor] .bg-app,
+[data-snip-editor] .bg-muted,
+[data-snip-editor] .bg-inset,
+[data-snip-editor] .bg-hover {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* Snipper window — fully transparent so the desktop shows through */
@@ -102,6 +149,10 @@ html.snip-mode #root,
 body.snip-mode,
 body.snip-mode #root {
   background: transparent !important;
+}
+
+html.snip-mode #sc-theme-bg {
+  display: none !important;
 }
 
 ::-webkit-scrollbar {
