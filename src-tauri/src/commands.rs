@@ -10,7 +10,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 fn sync_main_ui_visible(app: &AppHandle) {
     let visible = app
         .get_webview_window("main")
-        .and_then(|w| w.is_visible().ok())
+        .map(|w| {
+            w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false)
+        })
         .unwrap_or(false);
     clipboard::set_main_ui_visible(visible);
 }
@@ -310,4 +312,9 @@ pub fn copy_text_from_image(db: State<'_, Arc<Database>>, id: i64) -> Result<Str
     }
     clipboard::write_text_to_clipboard(&text)?;
     Ok(text)
+}
+
+#[tauri::command]
+pub fn is_ocr_available() -> bool {
+    crate::ocr::is_available()
 }

@@ -50,6 +50,7 @@ pub fn run() {
             commands::toggle_clipboard_paused,
             commands::get_running_apps,
             commands::copy_text_from_image,
+            commands::is_ocr_available,
         ])
         .setup(|app| {
             #[cfg(desktop)]
@@ -148,12 +149,24 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
-                if window.label() == "main" {
-                    clipboard::set_main_ui_visible(false);
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    if window.label() == "main" {
+                        clipboard::set_main_ui_visible(false);
+                    }
                 }
+                tauri::WindowEvent::Focused(_)
+                | tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    if window.label() == "main" {
+                        let visible = window.is_visible().unwrap_or(false)
+                            && !window.is_minimized().unwrap_or(false);
+                        clipboard::set_main_ui_visible(visible);
+                    }
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())

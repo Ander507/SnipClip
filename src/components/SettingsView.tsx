@@ -7,7 +7,7 @@ import { getSettings, updateSettings, getRunningApps } from "../lib/api";
 import { ACCENTS, applyTheme, type AccentColor, type ThemeMode } from "../lib/theme";
 import { ThemeEditor } from "./ThemeEditor";
 import { getVersion } from "@tauri-apps/api/app";
-import { checkForAppUpdate, installAppUpdate } from "../lib/updates";
+import { checkForAppUpdate, formatUpdateError, installAppUpdate } from "../lib/updates";
 import type { Update } from "@tauri-apps/plugin-updater";
 
 interface Props {
@@ -186,7 +186,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
       }
     } catch (err) {
       console.error(err);
-      setUpdateStatus("Failed to check for updates. Try again later.");
+      setUpdateStatus(formatUpdateError(err));
     } finally {
       setCheckingUpdate(false);
     }
@@ -213,7 +213,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
       setUpdateStatus("Update installed. Restarting…");
     } catch (err) {
       console.error(err);
-      setUpdateStatus("Failed to install update.");
+      setUpdateStatus(formatUpdateError(err));
       setInstallingUpdate(false);
     }
   }
@@ -562,7 +562,8 @@ export function SettingsView({ onClose, onSaved }: Props) {
               App updates
             </h3>
             <p className="mt-1 text-[12px] text-fg-muted">
-              Downloads a signed installer from GitHub, then restarts SnipClip to apply it.
+              Checks GitHub Releases for a signed build, then downloads and restarts to apply it.
+              Works in packaged installs after a v1.1+ release is published.
             </p>
           </div>
           <div className="space-y-3 rounded-lg border border-line bg-raised px-4 py-3">
@@ -597,8 +598,15 @@ export function SettingsView({ onClose, onSaved }: Props) {
                 <div className="h-px bg-line" />
                 <span
                   className={clsx(
-                    "text-[12px]",
-                    availableVersion ? "font-medium text-accent" : "text-fg-muted"
+                    "block text-[12px] leading-relaxed",
+                    availableVersion
+                      ? "font-medium text-accent"
+                      : updateStatus.toLowerCase().includes("fail") ||
+                          updateStatus.toLowerCase().includes("could not") ||
+                          updateStatus.toLowerCase().includes("no update feed") ||
+                          updateStatus.toLowerCase().includes("signature")
+                        ? "text-danger"
+                        : "text-fg-muted"
                   )}
                 >
                   {updateStatus}

@@ -50,6 +50,7 @@ function thumbSrc(item: ClipboardItem): string | null {
 interface Props {
   items: ClipboardItem[];
   selectedId: number | null;
+  ocrAvailable?: boolean;
   onSelect: (id: number) => void;
   onCopy: (id: number) => void;
   onExtractText: (id: number) => void;
@@ -61,6 +62,7 @@ interface Props {
 export function ClipboardList({
   items,
   selectedId,
+  ocrAvailable = false,
   onSelect,
   onCopy,
   onExtractText,
@@ -204,7 +206,7 @@ export function ClipboardList({
               </div>
 
               <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                {isImage && (
+                {isImage && ocrAvailable && (
                   <button
                     type="button"
                     title="Copy text from image (OCR)"

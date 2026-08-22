@@ -111,6 +111,13 @@ fn parse_ignore_list(raw: String) -> Vec<String> {
     )
 }
 
+fn escape_like(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -374,19 +381,21 @@ impl Database {
     ) -> Result<ClipboardItem, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
 
-        let last: Option<(String, String)> = conn
-            .query_row(
-                "SELECT content_type, content FROM items ORDER BY id DESC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+        let last: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT content_type, content FROM items ORDER BY id DESC LIMIT 8",
             )
-            .optional()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
 
-        if let Some((t, c)) = last {
-            if t == content_type && c == content {
-                return Err("duplicate".into());
-            }
+        if last
+            .iter()
+            .any(|(t, c)| t == content_type && c == content)
+        {
+            return Err("duplicate".into());
         }
 
         let created_at: DateTime<Utc> = Utc::now();
@@ -460,8 +469,8 @@ impl Database {
 
         if let Some(q) = query {
             if !q.trim().is_empty() {
-                sql.push_str(" AND (preview LIKE ? OR (content_type != 'image' AND content LIKE ?))");
-                let pattern = format!("%{q}%");
+                sql.push_str(" AND (preview LIKE ? ESCAPE '\\' OR (content_type != 'image' AND content LIKE ? ESCAPE '\\'))");
+                let pattern = format!("%{}%", escape_like(q.trim()));
                 binds.push(Box::new(pattern.clone()));
                 binds.push(Box::new(pattern));
             }

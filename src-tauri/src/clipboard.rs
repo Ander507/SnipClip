@@ -98,7 +98,7 @@ fn should_skip_insert() -> bool {
     if is_paused() {
         return true;
     }
-    let list = ignore_list().lock().clone();
+    let list = ignore_list().lock();
     if list.is_empty() {
         return false;
     }
@@ -115,9 +115,8 @@ fn image_content_hash(img: &ImageData<'_>) -> u64 {
     img.width.hash(&mut h);
     img.height.hash(&mut h);
     img.bytes.len().hash(&mut h);
-    let step = (img.bytes.len() / 32).max(1);
-    for b in img.bytes.iter().step_by(step) {
-        b.hash(&mut h);
+    for chunk in img.bytes.chunks(4096) {
+        chunk.hash(&mut h);
     }
     h.finish()
 }
@@ -253,24 +252,42 @@ pub fn start_monitor(app: AppHandle) {
                 }
             };
 
+            if is_paused() {
+                // Track clipboard state while paused so unpausing doesn't re-insert stale content.
+                if let Ok(text) = with_clipboard_retry(|c| c.get_text()) {
+                    if !text.is_empty() && Some(&text) != last_text.as_ref() {
+                        last_text = Some(text);
+                    }
+                }
+                if let Ok(img) = with_clipboard_retry(|c| c.get_image()) {
+                    let hash = image_content_hash(&img);
+                    if Some(hash) != last_image_hash {
+                        last_image_hash = Some(hash);
+                    }
+                }
+                thread::sleep(Duration::from_millis(poll_interval_ms()));
+                continue;
+            }
+
+            let skip_insert = should_skip_insert();
+
             if let Ok(text) = with_clipboard_retry(|c| c.get_text()) {
                 if !text.is_empty() && Some(&text) != last_text.as_ref() {
                     last_text = Some(text.clone());
-                    last_image_hash = None;
-                    if !should_skip_insert() {
+                    if !skip_insert {
                         let (ctype, preview) = classify_text(&text);
                         if let Ok(item) = db.insert(ctype, &text, &preview) {
                             let _ = app.emit("clipboard-item", &item.for_event());
                         }
                     }
                 }
-            } else if let Ok(img) = with_clipboard_retry(|c| c.get_image()) {
-                let hash = image_content_hash(&img);
+            }
 
+            if let Ok(img) = with_clipboard_retry(|c| c.get_image()) {
+                let hash = image_content_hash(&img);
                 if Some(hash) != last_image_hash {
                     last_image_hash = Some(hash);
-                    last_text = None;
-                    if !should_skip_insert() {
+                    if !skip_insert {
                         if let Ok((b64, thumb)) = image_to_png_b64(&img) {
                             let content = format!("data:image/png;base64,{b64}");
                             if let Ok(item) = db.insert("image", &content, &thumb) {

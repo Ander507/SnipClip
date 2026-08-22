@@ -20,10 +20,13 @@ import {
   getClipboardPaused,
   toggleClipboardPaused,
   copyTextFromImage,
+  isOcrAvailable,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
 import { applyTheme } from "./lib/theme";
+import { itemMatchesCategory, itemMatchesSearch } from "./lib/search";
+import { useStatusToast } from "./lib/useStatusToast";
 
 function App() {
   const [items, setItems] = useState<ClipboardItem[]>([]);
@@ -32,15 +35,18 @@ function App() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [capture, setCapture] = useState<CaptureResult | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useStatusToast();
   const [view, setView] = useState<"vault" | "settings">("vault");
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [clipboardPaused, setClipboardPaused] = useState(false);
+  const [ocrAvailable, setOcrAvailable] = useState(false);
   const categoryRef = useRef(category);
   categoryRef.current = category;
+  const debouncedQueryRef = useRef(debouncedQuery);
+  debouncedQueryRef.current = debouncedQuery;
   const searchRef = useRef<HTMLInputElement>(null);
   const selectedIdRef = useRef<number | null>(null);
   selectedIdRef.current = selectedId;
@@ -66,12 +72,6 @@ function App() {
   }, [query]);
 
   useEffect(() => {
-    // Clear stale rows when switching category tabs
-    setItems([]);
-    setSelectedId(null);
-  }, [category]);
-
-  useEffect(() => {
     void refresh();
   }, [refresh]);
 
@@ -89,6 +89,7 @@ function App() {
       })
       .catch(console.error);
     void getClipboardPaused().then(setClipboardPaused).catch(console.error);
+    void isOcrAvailable().then(setOcrAvailable).catch(() => setOcrAvailable(false));
   }, []);
 
   const startSnip = useCallback(async () => {
@@ -108,14 +109,9 @@ function App() {
       const item = event.payload;
       if (!item) return;
       const cat = categoryRef.current;
-      const matchesCategory =
-        cat === "all" ||
-        (cat === "text" && item.contentType === "text") ||
-        (cat === "images" && item.contentType === "image") ||
-        (cat === "links" && item.contentType === "link") ||
-        (cat === "pinned" && item.isPinned);
-
-      if (!matchesCategory) return;
+      const q = debouncedQueryRef.current;
+      if (!itemMatchesCategory(item, cat)) return;
+      if (!itemMatchesSearch(item, q)) return;
 
       setItems((prev) => {
         const base = Array.isArray(prev) ? prev : [];
@@ -146,28 +142,24 @@ function App() {
     try {
       const text = await copyTextFromImage(id);
       const preview = text.length > 48 ? `${text.slice(0, 48)}…` : text;
-      setStatus(`Copied text: ${preview}`);
-      setTimeout(() => setStatus(null), 2200);
+      setStatus(`Copied text: ${preview}`, 2200);
     } catch (err) {
-      setStatus(String(err));
-      setTimeout(() => setStatus(null), 2000);
+      setStatus(String(err), 2000);
     }
   }
 
   async function handleCopy(id: number) {
     try {
       await copyItem(id);
-      setStatus("Copied");
-      setTimeout(() => setStatus(null), 1200);
+      setStatus("Copied", 1200);
     } catch (err) {
       const msg = String(err);
       if (msg.toLowerCase().includes("not found")) {
-        setStatus("Item no longer available");
+        setStatus("Item no longer available", 1600);
         await refresh();
       } else {
-        setStatus(msg);
+        setStatus(msg, 1600);
       }
-      setTimeout(() => setStatus(null), 1600);
     }
   }
 
@@ -176,8 +168,7 @@ function App() {
       await togglePin(id);
       await refresh();
     } catch (err) {
-      setStatus(String(err));
-      setTimeout(() => setStatus(null), 1600);
+      setStatus(String(err), 1600);
       await refresh();
     }
   }
@@ -188,15 +179,19 @@ function App() {
       if (previewId === id) closeImagePreview();
       await refresh();
     } catch (err) {
-      setStatus(String(err));
-      setTimeout(() => setStatus(null), 1600);
+      setStatus(String(err), 1600);
       await refresh();
     }
   }
 
   async function handleClear() {
-    await clearHistory();
-    await refresh();
+    try {
+      await clearHistory();
+      await refresh();
+      setStatus("History cleared", 1400);
+    } catch (err) {
+      setStatus(String(err), 1600);
+    }
   }
 
   async function openImagePreview(id: number) {
@@ -242,8 +237,7 @@ function App() {
         monitorName: "vault",
       });
     } catch (err) {
-      setStatus(String(err));
-      setTimeout(() => setStatus(null), 1600);
+      setStatus(String(err), 1600);
     }
   }
 
@@ -357,6 +351,7 @@ function App() {
               <ClipboardList
                 items={items}
                 selectedId={selectedId}
+                ocrAvailable={ocrAvailable}
                 onSelect={setSelectedId}
                 onCopy={(id) => void handleCopy(id)}
                 onExtractText={(id) => void handleExtractText(id)}
@@ -377,6 +372,7 @@ function App() {
       <ImageViewerModal
         imageSrc={previewSrc}
         loading={previewLoading}
+        ocrAvailable={ocrAvailable}
         onClose={closeImagePreview}
         onCopy={() => {
           if (previewId != null) void handleCopy(previewId);

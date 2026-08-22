@@ -20,3 +20,7 @@ pub fn ocr_png_bytes(bytes: &[u8]) -> Result<String, String> {
 pub fn ocr_png_bytes(_bytes: &[u8]) -> Result<String, String> {
     Err("Text extraction from images is only supported on Windows".into())
 }
+
+pub fn is_available() -> bool {
+    cfg!(windows)
+}

@@ -4,6 +4,7 @@ import { Pencil, ScanText, X } from "lucide-react";
 interface Props {
   imageSrc: string | null;
   loading?: boolean;
+  ocrAvailable?: boolean;
   onClose: () => void;
   onCopy: () => void;
   onExtractText: () => void;
@@ -13,6 +14,7 @@ interface Props {
 export function ImageViewerModal({
   imageSrc,
   loading,
+  ocrAvailable = false,
   onClose,
   onCopy,
   onExtractText,
@@ -82,6 +84,7 @@ export function ImageViewerModal({
             <Pencil size={13} />
             Edit Image
           </button>
+          {ocrAvailable && (
           <button
             type="button"
             disabled={loading || !imageSrc || extracting}
@@ -94,6 +97,7 @@ export function ImageViewerModal({
             <ScanText size={13} />
             {extracting ? "Reading text…" : "Copy text from image"}
           </button>
+          )}
           <button
             type="button"
             disabled={loading || !imageSrc}

@@ -102,6 +102,10 @@ export function copyTextFromImage(id: number): Promise<string> {
   return invoke("copy_text_from_image", { id });
 }
 
+export function isOcrAvailable(): Promise<boolean> {
+  return invoke("is_ocr_available");
+}
+
 export function formatHotkeyShort(accel: string): string {
   return accel
     .replace(/CommandOrControl/gi, "⌃")
