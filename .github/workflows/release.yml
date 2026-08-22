@@ -68,11 +68,41 @@ jobs:
           releaseBody: |
             Installers for this tag:
 
-            - Windows: `.msi` and NSIS `.exe`
+            - Windows: `.msi`, NSIS `.exe`, and **portable `.zip`** (no install)
             - Linux: `.AppImage` and `.deb`
 
-            The auto-updater uses `latest.json` from this release.
+            Portable: unzip and run `SnipClip.exe` (WebView2 required — already on most Windows 10/11 PCs).
+
+            The auto-updater uses `latest.json` from this release (installers only).
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      - name: Package Windows portable zip
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $src = "src-tauri/target/release"
+          $stage = "SnipClip-portable"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "$src/snipclip.exe" "$stage/SnipClip.exe"
+          Get-ChildItem "$src/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $stage
+          if (Test-Path "$src/resources") {
+            Copy-Item "$src/resources" "$stage/resources" -Recurse
+          }
+          $zip = "SnipClip_${version}_x64_portable.zip"
+          if (Test-Path $zip) { Remove-Item $zip }
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip
+          Write-Host "Created $zip"
+
+      - name: Upload Windows portable to release
+        if: matrix.platform == 'windows-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $zip = "SnipClip_${version}_x64_portable.zip"
+          gh release upload "${{ github.ref_name }}" $zip --clobber
