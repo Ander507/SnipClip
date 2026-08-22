@@ -16,13 +16,87 @@ A local desktop clipboard vault and screenshot snipper — copy history, annotat
   <img src="docs/settings.png" alt="SnipClip settings — startup and hotkeys" width="480" />
 </p>
 
-> **Try it:** [Download the latest Windows release](https://github.com/Ander507/SnipClip/releases/latest) (`.msi` installer or standalone `.exe`), or build from source below.
+> **Try it:** [Download the latest release](https://github.com/Ander507/SnipClip/releases/latest), or use an install one-liner below.
 
-## Download
+## Install
 
-1. Open **[Releases](https://github.com/Ander507/SnipClip/releases)**
-2. Grab `SnipClip_…_x64_en-US.msi` (installer) or the standalone `.exe`
-3. Install / run — SnipClip lives in the tray; `Ctrl+Shift+V` toggles the UI, `Ctrl+Shift+S` snips
+### Windows (PowerShell)
+
+**Installer (NSIS):**
+
+```powershell
+$r = irm https://api.github.com/repos/Ander507/SnipClip/releases/latest
+$a = $r.assets | ? name -like '*x64-setup.exe' | select -First 1
+iwr $a.browser_download_url -OutFile $a.name
+Start-Process ".\$($a.name)"
+```
+
+**Portable (no install):**
+
+```powershell
+$r = irm https://api.github.com/repos/Ander507/SnipClip/releases/latest
+$a = $r.assets | ? name -like '*x64_portable.zip' | select -First 1
+iwr $a.browser_download_url -OutFile $a.name
+Expand-Archive $a.name -DestinationPath .\SnipClip -Force
+Start-Process .\SnipClip\SnipClip.exe
+```
+
+Or grab the `.msi` / `.exe` / portable `.zip` from [Releases](https://github.com/Ander507/SnipClip/releases/latest).
+
+### Linux
+
+**AppImage (most distros):**
+
+```bash
+curl -sL https://api.github.com/repos/Ander507/SnipClip/releases/latest \
+  | grep -oE 'https://[^"]+_amd64\.AppImage' | head -1 \
+  | xargs -I{} curl -L {} -o SnipClip.AppImage
+chmod +x SnipClip.AppImage
+./SnipClip.AppImage
+```
+
+**Debian / Ubuntu (`.deb`):**
+
+```bash
+curl -sL https://api.github.com/repos/Ander507/SnipClip/releases/latest \
+  | grep -oE 'https://[^"]+_amd64\.deb' | head -1 \
+  | xargs -I{} curl -L {} -o snipclip.deb
+sudo apt install ./snipclip.deb
+```
+
+With [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh release download -R Ander507/SnipClip -p '*amd64.AppImage' --clobber
+chmod +x SnipClip_*_amd64.AppImage && ./SnipClip_*_amd64.AppImage
+```
+
+### macOS
+
+Prebuilt macOS packages aren’t published yet — build from source:
+
+```bash
+# Needs Node 20+, Rust (rustup), and Xcode CLT
+git clone https://github.com/Ander507/SnipClip.git
+cd SnipClip
+npm install
+npm run tauri build
+# App: src-tauri/target/release/bundle/macos/SnipClip.app
+open src-tauri/target/release/bundle/macos/SnipClip.app
+```
+
+For day-to-day hacking: `npm run tauri dev`.
+
+### After install
+
+SnipClip sits in the tray. Defaults:
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Shift+V` | Toggle clipboard vault |
+| `Ctrl+Shift+S` | Start region snip |
+
+Both are editable in Settings.
 
 ## Quick start (from source)
 
@@ -33,20 +107,15 @@ npm run tauri dev
 
 That’s it for day-to-day use. First launch may compile the Rust side — give it a minute.
 
-**Defaults**
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Shift+V` | Toggle clipboard vault |
-| `Ctrl+Shift+S` | Start region snip |
-
-Both are editable in Settings.
-
 ## Features
 
 - **Clipboard vault** — watches the system clipboard for text, links, and images; stores history in SQLite (pinned items stay safe)
 - **Search & filters** — All / Text / Images / Links / Pinned, instant search, ↑↓ / `j` `k` keyboard nav
 - **Region snip** — translucent overlay → crop → annotate (pen, arrow, rect, highlight, blur, callouts, color picker)
+- **Pause & ignore list** — stop capture temporarily, or skip noisy apps (e.g. dictation)
+- **Themes** — dark/light, accent presets, full custom color editor
+- **OCR** — copy text from a snip (Windows)
+- **Auto-updater** — check for signed updates from Settings (packaged installs)
 - **Re-edit from vault** — open a past screenshot and annotate again
 - **Zoom & pan** — wheel zoom centered on cursor; middle-click or Shift-drag to pan
 - **Auto-clear** — optional wipe of unpinned history on reboot / daily / weekly
@@ -58,8 +127,8 @@ Both are editable in Settings.
 **Needs**
 
 - [Node.js](https://nodejs.org/) 20+ (npm)
-- [Rust](https://rustup.rs/) (stable) + Tauri Windows prerequisites ([guide](https://v2.tauri.app/start/prerequisites/))
-- Windows 10/11 (primary target; uses `xcap` for capture)
+- [Rust](https://rustup.rs/) (stable) + [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS
+- **Windows** is the primary target (OCR + richest clipboard owner detection). Linux and macOS builds work for the core vault/snip flow.
 
 ```bash
 # Install deps
@@ -68,7 +137,7 @@ npm install
 # Dev (Vite + Tauri)
 npm run tauri dev
 
-# Production installer / exe
+# Production packages
 npm run tauri build
 ```
 
