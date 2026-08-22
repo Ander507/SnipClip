@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SnipClip",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "com.ander507.snipclip",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -50,6 +50,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -59,5 +60,12 @@
       "icons/icon.ico"
     ]
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQwQjNDMzU2MkU1QjA0M0YKUldRL0JGc3VWc096UUY1ZmwwRVJXSnFyVC9wMVNGdHFZS1hjemI5V051VDk1QTdIWC9WWEtXSXQK",
+      "endpoints": [
+        "https://github.com/Ander507/SnipClip/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }

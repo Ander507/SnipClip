@@ -1,11 +1,12 @@
-import { useEffect } from "react";
-import { Pencil, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Pencil, ScanText, X } from "lucide-react";
 
 interface Props {
   imageSrc: string | null;
   loading?: boolean;
   onClose: () => void;
   onCopy: () => void;
+  onExtractText: () => void;
   onEdit: (imageSrc: string) => void;
 }
 
@@ -14,8 +15,10 @@ export function ImageViewerModal({
   loading,
   onClose,
   onCopy,
+  onExtractText,
   onEdit,
 }: Props) {
+  const [extracting, setExtracting] = useState(false);
   useEffect(() => {
     if (!imageSrc && !loading) return;
     function onKey(e: KeyboardEvent) {
@@ -78,6 +81,18 @@ export function ImageViewerModal({
           >
             <Pencil size={13} />
             Edit Image
+          </button>
+          <button
+            type="button"
+            disabled={loading || !imageSrc || extracting}
+            onClick={() => {
+              setExtracting(true);
+              Promise.resolve(onExtractText()).finally(() => setExtracting(false));
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-hover px-4 py-2 text-xs font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-40"
+          >
+            <ScanText size={13} />
+            {extracting ? "Reading text…" : "Copy text from image"}
           </button>
           <button
             type="button"

@@ -1,6 +1,6 @@
 [package]
 name = "snipclip"
-version = "1.0.0"
+version = "1.1.0"
 description = "Lightning-fast clipboard manager and screenshot suite"
 authors = ["you"]
 edition = "2021"
@@ -32,3 +32,11 @@ uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 thiserror = "2"
 tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+[target.'cfg(not(windows))'.dependencies]
+sysinfo = "0.32"
+
+[target."cfg(windows)".dependencies]
+win_ocr = "0.1.3"

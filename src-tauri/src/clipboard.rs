@@ -11,8 +11,11 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 static MONITORING: AtomicBool = AtomicBool::new(false);
+static PAUSED: AtomicBool = AtomicBool::new(false);
+static MAIN_UI_VISIBLE: AtomicBool = AtomicBool::new(true);
 static SUPPRESS_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 static CLIPBOARD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static IGNORE_LIST: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 const RETRIES: u32 = 5;
 const RETRY_DELAY_MS: u64 = 20;
@@ -34,6 +37,89 @@ fn suppress_monitor(ms: u64) {
 
 fn is_suppressed() -> bool {
     now_ms() < SUPPRESS_UNTIL_MS.load(Ordering::SeqCst)
+}
+
+fn ignore_list() -> &'static Mutex<Vec<String>> {
+    IGNORE_LIST.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn set_paused(paused: bool) -> bool {
+    PAUSED.store(paused, Ordering::SeqCst);
+    paused
+}
+
+pub fn toggle_paused() -> bool {
+    let next = !PAUSED.load(Ordering::SeqCst);
+    PAUSED.store(next, Ordering::SeqCst);
+    next
+}
+
+pub fn is_paused() -> bool {
+    PAUSED.load(Ordering::SeqCst)
+}
+
+pub fn set_main_ui_visible(visible: bool) {
+    MAIN_UI_VISIBLE.store(visible, Ordering::SeqCst);
+}
+
+fn poll_interval_ms() -> u64 {
+    if is_paused() || !MAIN_UI_VISIBLE.load(Ordering::SeqCst) {
+        1500
+    } else {
+        400
+    }
+}
+
+pub fn set_ignore_list(names: Vec<String>) {
+    *ignore_list().lock() = crate::db::normalize_ignore_list(names);
+}
+
+fn process_is_ignored(process: &str, list: &[String]) -> bool {
+    let proc = process.to_lowercase();
+    let stem = std::path::Path::new(&proc)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(proc.as_str());
+    list.iter().any(|entry| {
+        let e = entry.trim().to_lowercase();
+        if e.is_empty() {
+            return false;
+        }
+        let e_stem = std::path::Path::new(&e)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(e.as_str());
+        proc == e || stem == e || stem == e_stem || proc == e_stem
+    })
+}
+
+/// Skip vault insert when paused, or when the clipboard owner is on the ignore list.
+fn should_skip_insert() -> bool {
+    if is_paused() {
+        return true;
+    }
+    let list = ignore_list().lock().clone();
+    if list.is_empty() {
+        return false;
+    }
+    match clipboard_source_process() {
+        Some(name) if process_is_ignored(&name, &list) => true,
+        _ => false,
+    }
+}
+
+fn image_content_hash(img: &ImageData<'_>) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    img.width.hash(&mut h);
+    img.height.hash(&mut h);
+    img.bytes.len().hash(&mut h);
+    let step = (img.bytes.len() / 32).max(1);
+    for b in img.bytes.iter().step_by(step) {
+        b.hash(&mut h);
+    }
+    h.finish()
 }
 
 fn with_clipboard_retry<T, F>(mut op: F) -> Result<T, String>
@@ -139,6 +225,12 @@ pub fn start_monitor(app: AppHandle) {
         return;
     }
 
+    if let Some(db) = app.try_state::<Arc<Database>>() {
+        if let Ok(settings) = db.get_settings() {
+            set_ignore_list(settings.ignore_list);
+        }
+    }
+
     thread::spawn(move || {
         let mut last_text: Option<String> = None;
         let mut last_image_hash: Option<u64> = None;
@@ -156,7 +248,7 @@ pub fn start_monitor(app: AppHandle) {
             let db = match app.try_state::<Arc<Database>>() {
                 Some(d) => d.clone(),
                 None => {
-                    thread::sleep(Duration::from_millis(500));
+                    thread::sleep(Duration::from_millis(poll_interval_ms()));
                     continue;
                 }
             };
@@ -165,39 +257,31 @@ pub fn start_monitor(app: AppHandle) {
                 if !text.is_empty() && Some(&text) != last_text.as_ref() {
                     last_text = Some(text.clone());
                     last_image_hash = None;
-                    let (ctype, preview) = classify_text(&text);
-                    if let Ok(item) = db.insert(ctype, &text, &preview) {
-                        let _ = app.emit("clipboard-item", &item.for_event());
+                    if !should_skip_insert() {
+                        let (ctype, preview) = classify_text(&text);
+                        if let Ok(item) = db.insert(ctype, &text, &preview) {
+                            let _ = app.emit("clipboard-item", &item.for_event());
+                        }
                     }
                 }
             } else if let Ok(img) = with_clipboard_retry(|c| c.get_image()) {
-                let hash = {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut h = DefaultHasher::new();
-                    img.width.hash(&mut h);
-                    img.height.hash(&mut h);
-                    img.bytes.len().hash(&mut h);
-                    let step = (img.bytes.len() / 32).max(1);
-                    for b in img.bytes.iter().step_by(step) {
-                        b.hash(&mut h);
-                    }
-                    h.finish()
-                };
+                let hash = image_content_hash(&img);
 
                 if Some(hash) != last_image_hash {
                     last_image_hash = Some(hash);
                     last_text = None;
-                    if let Ok((b64, thumb)) = image_to_png_b64(&img) {
-                        let content = format!("data:image/png;base64,{b64}");
-                        if let Ok(item) = db.insert("image", &content, &thumb) {
-                            let _ = app.emit("clipboard-item", &item.for_event());
+                    if !should_skip_insert() {
+                        if let Ok((b64, thumb)) = image_to_png_b64(&img) {
+                            let content = format!("data:image/png;base64,{b64}");
+                            if let Ok(item) = db.insert("image", &content, &thumb) {
+                                let _ = app.emit("clipboard-item", &item.for_event());
+                            }
                         }
                     }
                 }
             }
 
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(poll_interval_ms()));
         }
     });
 }
@@ -242,4 +326,75 @@ pub fn encode_rgba_png_b64(width: u32, height: u32, pixels: &[u8]) -> Result<Str
     img.write_to(&mut buf, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;
     Ok(B64.encode(buf.into_inner()))
+}
+
+/// Executable name of the process that currently owns the clipboard (Windows).
+/// Wayland/X11 do not expose a reliable clipboard owner, so this is `None` elsewhere.
+fn clipboard_source_process() -> Option<String> {
+    #[cfg(windows)]
+    {
+        win_clip_owner::process_name()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+#[cfg(windows)]
+mod win_clip_owner {
+    use std::os::windows::ffi::OsStringExt;
+
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetClipboardOwner() -> isize;
+        fn GetForegroundWindow() -> isize;
+        fn GetWindowThreadProcessId(hwnd: isize, lpdw_process_id: *mut u32) -> u32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+        fn CloseHandle(handle: isize) -> i32;
+        fn QueryFullProcessImageNameW(
+            handle: isize,
+            flags: u32,
+            exe_name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+    }
+
+    pub fn process_name() -> Option<String> {
+        unsafe {
+            let mut hwnd = GetClipboardOwner();
+            if hwnd == 0 {
+                hwnd = GetForegroundWindow();
+            }
+            if hwnd == 0 {
+                return None;
+            }
+            let mut pid: u32 = 0;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid == 0 {
+                return None;
+            }
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle == 0 {
+                return None;
+            }
+            let mut buf = [0u16; 260];
+            let mut size = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size);
+            CloseHandle(handle);
+            if ok == 0 || size == 0 {
+                return None;
+            }
+            let path = std::ffi::OsString::from_wide(&buf[..size as usize]);
+            std::path::Path::new(&path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+        }
+    }
 }

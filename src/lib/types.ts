@@ -18,8 +18,8 @@ export interface CaptureResult {
   monitorName: string;
 }
 
-export type { ThemeMode, AccentColor } from "./theme";
-import type { ThemeMode, AccentColor } from "./theme";
+export type { ThemeMode, AccentColor, ThemeCustomColors } from "./theme";
+import type { ThemeMode, AccentColor, ThemeCustomColors } from "./theme";
 
 export interface AppSettings {
   hotkeyClipboard: string;
@@ -32,6 +32,11 @@ export interface AppSettings {
   launchAtStartup: boolean;
   themeMode: ThemeMode;
   accentColor: AccentColor;
+  /** When true, `themeCustom` overrides preset CSS variables. */
+  themeUseCustom: boolean;
+  themeCustom: ThemeCustomColors | null;
+  /** Process names whose copies are not stored (e.g. WhisperFlow.exe). */
+  ignoreList: string[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -43,6 +48,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtStartup: false,
   themeMode: "dark",
   accentColor: "cyan",
+  themeUseCustom: false,
+  themeCustom: null,
+  ignoreList: [],
 };
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";

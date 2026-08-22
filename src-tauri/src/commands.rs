@@ -1,9 +1,28 @@
+use crate::apps;
 use crate::clipboard;
 use crate::db::{AppSettings, ClipboardItem, Database};
 use crate::hotkeys::{self, HotkeyState};
 use crate::snip::{self, CaptureResult};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+fn sync_main_ui_visible(app: &AppHandle) {
+    let visible = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    clipboard::set_main_ui_visible(visible);
+}
+
+fn decode_image_data_url(data_url: &str) -> Result<Vec<u8>, String> {
+    let b64 = data_url
+        .strip_prefix("data:image/png;base64,")
+        .or_else(|| data_url.strip_prefix("data:image/jpeg;base64,"))
+        .or_else(|| data_url.strip_prefix("data:image/webp;base64,"))
+        .unwrap_or(data_url);
+    B64.decode(b64).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 pub fn list_items(
@@ -118,6 +137,7 @@ pub fn toggle_main_window(app: AppHandle) -> Result<(), String> {
             let _ = win.set_focus();
         }
     }
+    sync_main_ui_visible(&app);
     Ok(())
 }
 
@@ -128,6 +148,7 @@ pub fn show_main_window(app: AppHandle) -> Result<(), String> {
         let _ = win.unminimize();
         let _ = win.set_focus();
     }
+    sync_main_ui_visible(&app);
     Ok(())
 }
 
@@ -136,6 +157,7 @@ pub fn hide_main_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
     }
+    sync_main_ui_visible(&app);
     Ok(())
 }
 
@@ -154,6 +176,7 @@ pub fn begin_snip(app: AppHandle) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.hide();
     }
+    sync_main_ui_visible(&app);
 
     let snipper = match app.get_webview_window("snipper") {
         Some(w) => w,
@@ -218,6 +241,7 @@ pub fn update_settings(
 ) -> Result<AppSettings, String> {
     hotkeys::apply_hotkeys(&app, &settings)?;
     db.save_settings(&settings)?;
+    clipboard::set_ignore_list(settings.ignore_list.clone());
 
     #[cfg(desktop)]
     {
@@ -244,4 +268,46 @@ pub fn update_hotkeys(
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
     update_settings(app, db, hotkeys_state, settings)
+}
+
+#[tauri::command]
+pub fn get_clipboard_paused() -> bool {
+    clipboard::is_paused()
+}
+
+#[tauri::command]
+pub fn set_clipboard_paused(app: AppHandle, paused: bool) -> bool {
+    let state = clipboard::set_paused(paused);
+    let _ = app.emit("clipboard-paused", state);
+    state
+}
+
+#[tauri::command]
+pub fn toggle_clipboard_paused(app: AppHandle) -> bool {
+    let state = clipboard::toggle_paused();
+    let _ = app.emit("clipboard-paused", state);
+    state
+}
+
+#[tauri::command]
+pub fn get_running_apps() -> Vec<String> {
+    apps::list_running_apps()
+}
+
+/// OCR text from a vault image and copy it to the system clipboard.
+#[tauri::command]
+pub fn copy_text_from_image(db: State<'_, Arc<Database>>, id: i64) -> Result<String, String> {
+    let item = db.get(id)?.ok_or_else(|| "item not found".to_string())?;
+    if item.content_type != "image" {
+        return Err("item is not an image".into());
+    }
+    let bytes = decode_image_data_url(&item.content)?;
+    let text = crate::ocr::ocr_png_bytes(&bytes)?
+        .trim()
+        .to_string();
+    if text.is_empty() {
+        return Err("No text found in image".into());
+    }
+    clipboard::write_text_to_clipboard(&text)?;
+    Ok(text)
 }

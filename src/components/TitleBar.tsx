@@ -1,7 +1,13 @@
-import { Minus, Square, X } from "lucide-react";
+import clsx from "clsx";
+import { Minus, Pause, Play, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-export function TitleBar() {
+interface Props {
+  paused: boolean;
+  onTogglePause: () => void;
+}
+
+export function TitleBar({ paused, onTogglePause }: Props) {
   const appWindow = getCurrentWindow();
 
   return (
@@ -24,6 +30,23 @@ export function TitleBar() {
       </div>
 
       <div className="no-drag flex h-full items-stretch">
+        <button
+          type="button"
+          aria-pressed={paused}
+          aria-label={paused ? "Resume clipboard listening" : "Pause clipboard listening"}
+          title={paused ? "Resume clipboard listening" : "Pause clipboard listening"}
+          className={clsx(
+            "flex items-center gap-1.5 px-2.5 text-[11px] font-medium transition",
+            paused
+              ? "bg-accent-soft text-accent"
+              : "text-fg-secondary hover:bg-hover"
+          )}
+          onClick={onTogglePause}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {paused ? <Play size={12} /> : <Pause size={12} />}
+          {paused ? "Paused" : "Pause"}
+        </button>
         <button
           type="button"
           aria-label="Minimize"

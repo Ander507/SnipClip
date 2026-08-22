@@ -86,6 +86,22 @@ export function updateSettings(settings: AppSettings): Promise<AppSettings> {
   return invoke("update_settings", { settings });
 }
 
+export function getClipboardPaused(): Promise<boolean> {
+  return invoke("get_clipboard_paused");
+}
+
+export function toggleClipboardPaused(): Promise<boolean> {
+  return invoke("toggle_clipboard_paused");
+}
+
+export function getRunningApps(): Promise<string[]> {
+  return invoke("get_running_apps");
+}
+
+export function copyTextFromImage(id: number): Promise<string> {
+  return invoke("copy_text_from_image", { id });
+}
+
 export function formatHotkeyShort(accel: string): string {
   return accel
     .replace(/CommandOrControl/gi, "⌃")

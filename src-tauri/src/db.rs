@@ -52,6 +52,13 @@ pub struct AppSettings {
     pub theme_mode: String,
     /// "cyan" | "purple" | "green" | "orange"
     pub accent_color: String,
+    #[serde(default)]
+    pub theme_use_custom: bool,
+    #[serde(default)]
+    pub theme_custom: Option<serde_json::Value>,
+    /// Process names whose clipboard writes are not stored (e.g. "WhisperFlow.exe").
+    #[serde(default)]
+    pub ignore_list: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -65,8 +72,43 @@ impl Default for AppSettings {
             launch_at_startup: false,
             theme_mode: "dark".to_string(),
             accent_color: "cyan".to_string(),
+            theme_use_custom: false,
+            theme_custom: None,
+            ignore_list: Vec::new(),
         }
     }
+}
+
+pub fn normalize_ignore_list(names: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in names {
+        let name = raw.trim();
+        if name.is_empty() || name.len() > 64 {
+            continue;
+        }
+        if out
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(name))
+        {
+            continue;
+        }
+        out.push(name.to_string());
+        if out.len() >= 32 {
+            break;
+        }
+    }
+    out
+}
+
+fn parse_ignore_list(raw: String) -> Vec<String> {
+    if let Ok(list) = serde_json::from_str::<Vec<String>>(&raw) {
+        return normalize_ignore_list(list);
+    }
+    normalize_ignore_list(
+        raw.split(',')
+            .map(|s| s.trim().to_string())
+            .collect(),
+    )
 }
 
 pub struct Database {
@@ -134,6 +176,9 @@ impl Database {
         if self.get_setting("accent_color")?.is_none() {
             self.set_setting("accent_color", "cyan")?;
         }
+        if self.get_setting("ignore_list")?.is_none() {
+            self.set_setting("ignore_list", "[]")?;
+        }
         Ok(())
     }
 
@@ -190,6 +235,17 @@ impl Database {
             "purple" | "green" | "orange" => accent_raw,
             _ => "cyan".to_string(),
         };
+        let theme_use_custom = self
+            .get_setting("theme_use_custom")?
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let theme_custom = self
+            .get_setting("theme_custom")?
+            .and_then(|raw| serde_json::from_str(&raw).ok());
+        let ignore_list = self
+            .get_setting("ignore_list")?
+            .map(parse_ignore_list)
+            .unwrap_or_default();
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -203,6 +259,9 @@ impl Database {
             launch_at_startup,
             theme_mode,
             accent_color,
+            theme_use_custom,
+            theme_custom,
+            ignore_list,
         })
     }
 
@@ -235,6 +294,20 @@ impl Database {
             _ => "cyan",
         };
         self.set_setting("accent_color", accent)?;
+        self.set_setting(
+            "theme_use_custom",
+            if settings.theme_use_custom { "1" } else { "0" },
+        )?;
+        if let Some(custom) = &settings.theme_custom {
+            let json = serde_json::to_string(custom).unwrap_or_else(|_| "{}".to_string());
+            self.set_setting("theme_custom", &json)?;
+        } else {
+            self.set_setting("theme_custom", "")?;
+        }
+        let ignore = normalize_ignore_list(settings.ignore_list.clone());
+        let ignore_json =
+            serde_json::to_string(&ignore).unwrap_or_else(|_| "[]".to_string());
+        self.set_setting("ignore_list", &ignore_json)?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }

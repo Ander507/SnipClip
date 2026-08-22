@@ -133,7 +133,6 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
                     let _ = crate::commands::toggle_main_window(app.clone());
                     let _ = app.emit("focus-search", ());
                 } else if *shortcut == snip {
-                    // Directly warm-show the preloaded snipper — no round-trip through React
                     let _ = crate::commands::begin_snip(app.clone());
                 }
             })

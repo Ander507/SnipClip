@@ -17,6 +17,9 @@ import {
   formatHotkeyShort,
   beginSnip,
   getItem,
+  getClipboardPaused,
+  toggleClipboardPaused,
+  copyTextFromImage,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
@@ -26,6 +29,7 @@ function App() {
   const [items, setItems] = useState<ClipboardItem[]>([]);
   const [category, setCategory] = useState<Category>("all");
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [capture, setCapture] = useState<CaptureResult | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -34,6 +38,7 @@ function App() {
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [clipboardPaused, setClipboardPaused] = useState(false);
   const categoryRef = useRef(category);
   categoryRef.current = category;
   const searchRef = useRef<HTMLInputElement>(null);
@@ -42,7 +47,7 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const data = (await listItems(category, query)) ?? [];
+      const data = (await listItems(category, debouncedQuery)) ?? [];
       setItems(Array.isArray(data) ? data : []);
       setSelectedId((prev) => {
         if (prev && data.some((i) => i.id === prev)) return prev;
@@ -53,7 +58,12 @@ function App() {
       setItems([]);
       setSelectedId(null);
     }
-  }, [category, query]);
+  }, [category, debouncedQuery]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedQuery(query), 200);
+    return () => window.clearTimeout(handle);
+  }, [query]);
 
   useEffect(() => {
     // Clear stale rows when switching category tabs
@@ -68,10 +78,17 @@ function App() {
   useEffect(() => {
     void getSettings()
       .then((s) => {
-        setSettings(s);
-        applyTheme(s.themeMode, s.accentColor);
+        const next = {
+          ...s,
+          ignoreList: s.ignoreList ?? [],
+          themeUseCustom: s.themeUseCustom ?? false,
+          themeCustom: s.themeCustom ?? null,
+        };
+        setSettings(next);
+        applyTheme(next);
       })
       .catch(console.error);
+    void getClipboardPaused().then(setClipboardPaused).catch(console.error);
   }, []);
 
   const startSnip = useCallback(async () => {
@@ -113,6 +130,10 @@ function App() {
       searchRef.current?.select();
     }).then((u) => unsubs.push(u));
 
+    void listen<boolean>("clipboard-paused", (event) => {
+      setClipboardPaused(Boolean(event.payload));
+    }).then((u) => unsubs.push(u));
+
     // Cropped region finished in the snipper window
     void listen<CaptureResult>("snip-complete", (event) => {
       setCapture(event.payload);
@@ -120,6 +141,18 @@ function App() {
 
     return () => unsubs.forEach((u) => u());
   }, []);
+
+  async function handleExtractText(id: number) {
+    try {
+      const text = await copyTextFromImage(id);
+      const preview = text.length > 48 ? `${text.slice(0, 48)}…` : text;
+      setStatus(`Copied text: ${preview}`);
+      setTimeout(() => setStatus(null), 2200);
+    } catch (err) {
+      setStatus(String(err));
+      setTimeout(() => setStatus(null), 2000);
+    }
+  }
 
   async function handleCopy(id: number) {
     try {
@@ -282,7 +315,12 @@ function App() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-app text-fg">
-      <TitleBar />
+      <TitleBar
+        paused={clipboardPaused}
+        onTogglePause={() => {
+          void toggleClipboardPaused().then(setClipboardPaused).catch(console.error);
+        }}
+      />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar
           category={category}
@@ -303,7 +341,7 @@ function App() {
               onClose={() => setView("vault")}
               onSaved={(s) => {
                 setSettings(s);
-                applyTheme(s.themeMode, s.accentColor);
+                applyTheme(s);
               }}
             />
           ) : (
@@ -313,6 +351,7 @@ function App() {
                 <p className="mt-2 text-[11px] text-fg-faint">
                   ↑↓ navigate · Enter copy ·{" "}
                   {formatHotkeyShort(settings.hotkeyClipboard)} toggle
+                  {clipboardPaused ? " · listening paused" : ""}
                 </p>
               </div>
               <ClipboardList
@@ -320,6 +359,7 @@ function App() {
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 onCopy={(id) => void handleCopy(id)}
+                onExtractText={(id) => void handleExtractText(id)}
                 onPin={(id) => void handlePin(id)}
                 onDelete={(id) => void handleDelete(id)}
                 onPreviewImage={(id) => void openImagePreview(id)}
@@ -341,6 +381,9 @@ function App() {
         onCopy={() => {
           if (previewId != null) void handleCopy(previewId);
         }}
+        onExtractText={() => {
+          if (previewId != null) void handleExtractText(previewId);
+        }}
         onEdit={(src) => void handleEditImage(src)}
       />
 
@@ -356,3 +399,6 @@ function App() {
 }
 
 export default App;
+
+
+

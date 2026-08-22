@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { RotateCcw, Keyboard, Trash2, Power, Palette, Moon, Sun } from "lucide-react";
+import { RotateCcw, Keyboard, Trash2, Power, Palette, Moon, Sun, Ban, Download, RefreshCw } from "lucide-react";
 import type { AppSettings, ClearInterval } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
-import { getSettings, updateSettings } from "../lib/api";
+import { getSettings, updateSettings, getRunningApps } from "../lib/api";
 import { ACCENTS, applyTheme, type AccentColor, type ThemeMode } from "../lib/theme";
+import { ThemeEditor } from "./ThemeEditor";
+import { getVersion } from "@tauri-apps/api/app";
+import { checkForAppUpdate, installAppUpdate } from "../lib/updates";
+import type { Update } from "@tauri-apps/plugin-updater";
 
 interface Props {
   onClose: () => void;
@@ -44,7 +48,10 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.clearInterval !== b.clearInterval ||
     a.launchAtStartup !== b.launchAtStartup ||
     a.themeMode !== b.themeMode ||
-    a.accentColor !== b.accentColor
+    a.accentColor !== b.accentColor ||
+    a.themeUseCustom !== b.themeUseCustom ||
+    JSON.stringify(a.themeCustom) !== JSON.stringify(b.themeCustom) ||
+    a.ignoreList.join("\0") !== b.ignoreList.join("\0")
   );
 }
 
@@ -55,19 +62,61 @@ export function SettingsView({ onClose, onSaved }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [ignoreDraft, setIgnoreDraft] = useState("");
+  const [runningApps, setRunningApps] = useState<string[]>([]);
+  const [loadingApps, setLoadingApps] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState("…");
+  const [updateStatus, setUpdateStatus] = useState("");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+  const pendingUpdate = useRef<Update | null>(null);
   const captureRef = useRef<CaptureTarget>(null);
   captureRef.current = capturing;
 
   useEffect(() => {
     void getSettings().then((s) => {
-      setSettings(s);
-      setDraft(s);
+      const next = {
+        ...s,
+        ignoreList: s.ignoreList ?? [],
+        themeUseCustom: s.themeUseCustom ?? false,
+        themeCustom: s.themeCustom ?? null,
+      };
+      setSettings(next);
+      setDraft(next);
     });
+    void getVersion().then(setCurrentVersion).catch(console.error);
+    void refreshRunningApps();
   }, []);
+
+  async function refreshRunningApps() {
+    setLoadingApps(true);
+    try {
+      const apps = await getRunningApps();
+      setRunningApps(Array.isArray(apps) ? apps : []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingApps(false);
+    }
+  }
+
+  function addIgnoreName(raw: string) {
+    const name = raw.trim();
+    if (!name) return;
+    setDraft((prev) => {
+      if (!prev) return prev;
+      if (prev.ignoreList.some((n) => n.toLowerCase() === name.toLowerCase())) {
+        return prev;
+      }
+      return { ...prev, ignoreList: [...prev.ignoreList, name] };
+    });
+    setIgnoreDraft("");
+  }
 
   useEffect(() => {
     if (!draft) return;
-    applyTheme(draft.themeMode, draft.accentColor);
+    applyTheme(draft);
   }, [draft]);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
@@ -116,8 +165,57 @@ export function SettingsView({ onClose, onSaved }: Props) {
   }
 
   function handleBack() {
-    if (settings) applyTheme(settings.themeMode, settings.accentColor);
+    if (settings) applyTheme(settings);
     onClose();
+  }
+
+  async function checkForUpdates() {
+    if (checkingUpdate || installingUpdate) return;
+    setCheckingUpdate(true);
+    setUpdateStatus("Checking for updates…");
+    setAvailableVersion(null);
+    pendingUpdate.current = null;
+    try {
+      const update = await checkForAppUpdate();
+      if (update) {
+        pendingUpdate.current = update;
+        setAvailableVersion(update.version);
+        setUpdateStatus(`Version v${update.version} is available.`);
+      } else {
+        setUpdateStatus("You are on the latest version.");
+      }
+    } catch (err) {
+      console.error(err);
+      setUpdateStatus("Failed to check for updates. Try again later.");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function downloadAndInstall() {
+    const update = pendingUpdate.current;
+    if (!update || installingUpdate) return;
+    setInstallingUpdate(true);
+    setUpdateStatus("Starting download…");
+    try {
+      await installAppUpdate(update, ({ downloaded, total, status }) => {
+        if (status === "finished") {
+          setUpdateStatus("Download complete. Installing…");
+          return;
+        }
+        if (total && total > 0) {
+          const pct = Math.min(100, Math.round((downloaded / total) * 100));
+          setUpdateStatus(`Downloading update… ${pct}%`);
+        } else {
+          setUpdateStatus("Downloading update…");
+        }
+      });
+      setUpdateStatus("Update installed. Restarting…");
+    } catch (err) {
+      console.error(err);
+      setUpdateStatus("Failed to install update.");
+      setInstallingUpdate(false);
+    }
   }
 
   const dirty = draft && settings && isDirty(draft, settings);
@@ -140,7 +238,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
           <div>
             <h2 className="text-[14px] font-semibold text-fg">Settings</h2>
             <p className="text-[12px] text-fg-muted">
-              Appearance, startup, hotkeys, and vault cleanup. Changes apply when you save.
+              Appearance, clipboard ignore list, startup, hotkeys, and vault cleanup. Changes apply when you save.
             </p>
           </div>
         </div>
@@ -223,6 +321,124 @@ export function SettingsView({ onClose, onSaved }: Props) {
                   );
                 })}
               </div>
+            </div>
+          </div>
+
+          <ThemeEditor draft={draft} setDraft={setDraft} />
+        </section>
+
+        <section className="space-y-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+              <Ban size={11} /> Clipboard ignore list
+            </h3>
+            <p className="mt-1 text-[12px] text-fg-muted">
+              Skip copies from dictation apps (and anything else that floods the vault). Click a
+              running app or type the process name. Pause in the title bar to stop all capture
+              temporarily.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-lg border border-line bg-raised px-4 py-3">
+            {draft.ignoreList.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {draft.ignoreList.map((name) => (
+                  <span
+                    key={name}
+                    className="inline-flex items-center gap-1 rounded-md border border-danger/30 bg-danger/10 px-2 py-1 font-mono text-[11px] text-danger"
+                  >
+                    {name}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${name}`}
+                      className="rounded p-0.5 hover:text-fg"
+                      onClick={() =>
+                        setDraft((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                ignoreList: prev.ignoreList.filter((n) => n !== name),
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                addIgnoreName(ignoreDraft);
+              }}
+            >
+              <input
+                type="text"
+                value={ignoreDraft}
+                onChange={(e) => setIgnoreDraft(e.target.value)}
+                placeholder="WhisperFlow.exe"
+                className="min-w-0 flex-1 rounded-md border border-line bg-inset px-3 py-2 font-mono text-[12px] text-fg-secondary outline-none placeholder:text-fg-faint focus:border-accent"
+              />
+              <button
+                type="submit"
+                className="rounded-md bg-hover px-3 py-2 text-[12px] font-medium text-fg-secondary hover:bg-muted"
+              >
+                Add
+              </button>
+            </form>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-medium text-fg-muted">
+                Currently running (click to add)
+              </span>
+              <button
+                type="button"
+                title="Refresh open applications"
+                onClick={() => void refreshRunningApps()}
+                className="inline-flex items-center gap-1 text-[11px] text-fg-muted hover:text-fg"
+              >
+                <RefreshCw size={11} className={loadingApps ? "animate-spin" : ""} />
+                Refresh
+              </button>
+            </div>
+            <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto pr-1">
+              {runningApps
+                .filter(
+                  (app) =>
+                    !draft.ignoreList.some((n) => n.toLowerCase() === app.toLowerCase())
+                )
+                .map((app) => (
+                  <button
+                    key={app}
+                    type="button"
+                    onClick={() => addIgnoreName(app)}
+                    className="inline-flex items-center gap-1 rounded-md border border-line bg-inset px-2 py-0.5 font-mono text-[10px] text-fg-muted transition hover:border-accent hover:text-accent"
+                  >
+                    <span className="text-accent">+</span>
+                    {app}
+                  </button>
+                ))}
+              {["WhisperFlow.exe", "wisprflow.exe"]
+                .filter(
+                  (hint) =>
+                    !draft.ignoreList.some((n) => n.toLowerCase() === hint.toLowerCase()) &&
+                    !runningApps.some((app) => app.toLowerCase() === hint.toLowerCase())
+                )
+                .map((hint) => (
+                  <button
+                    key={hint}
+                    type="button"
+                    onClick={() => addIgnoreName(hint)}
+                    className="rounded-md border border-dashed border-line px-2 py-0.5 font-mono text-[10px] text-fg-faint hover:border-accent hover:text-accent"
+                  >
+                    + {hint}
+                  </button>
+                ))}
+              {!loadingApps && runningApps.length === 0 && (
+                <span className="text-[11px] text-fg-faint">No visible apps found.</span>
+              )}
             </div>
           </div>
         </section>
@@ -337,6 +553,58 @@ export function SettingsView({ onClose, onSaved }: Props) {
                 <option value="weekly">Every 7 days</option>
               </select>
             </div>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+              App updates
+            </h3>
+            <p className="mt-1 text-[12px] text-fg-muted">
+              Downloads a signed installer from GitHub, then restarts SnipClip to apply it.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="block text-[13px] text-fg-secondary">Current version</span>
+                <span className="font-mono text-[11px] text-fg-muted">v{currentVersion}</span>
+              </div>
+              {availableVersion ? (
+                <button
+                  type="button"
+                  disabled={installingUpdate}
+                  onClick={() => void downloadAndInstall()}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-[12px] font-semibold text-accent-fg hover:brightness-110 disabled:opacity-50"
+                >
+                  <Download size={12} />
+                  {installingUpdate ? "Installing…" : "Install update"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={checkingUpdate || installingUpdate}
+                  onClick={() => void checkForUpdates()}
+                  className="rounded-md border border-line bg-hover px-3 py-2 text-[12px] font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-50"
+                >
+                  {checkingUpdate ? "Checking…" : "Check for updates"}
+                </button>
+              )}
+            </div>
+            {updateStatus && (
+              <>
+                <div className="h-px bg-line" />
+                <span
+                  className={clsx(
+                    "text-[12px]",
+                    availableVersion ? "font-medium text-accent" : "text-fg-muted"
+                  )}
+                >
+                  {updateStatus}
+                </span>
+              </>
+            )}
           </div>
         </section>
 

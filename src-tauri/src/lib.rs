@@ -1,7 +1,9 @@
+mod apps;
 mod clipboard;
 mod commands;
 mod db;
 mod hotkeys;
+mod ocr;
 mod snip;
 
 use db::Database;
@@ -21,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             commands::list_items,
             commands::get_item,
@@ -42,8 +45,16 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::update_hotkeys,
+            commands::get_clipboard_paused,
+            commands::set_clipboard_paused,
+            commands::toggle_clipboard_paused,
+            commands::get_running_apps,
+            commands::copy_text_from_image,
         ])
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+
             #[cfg(desktop)]
             {
                 use tauri_plugin_autostart::MacosLauncher;
@@ -86,6 +97,7 @@ pub fn run() {
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.hide();
                 }
+                clipboard::set_main_ui_visible(false);
             }
 
             let show_i = MenuItem::with_id(app, "show", "Show SnipClip", true, None::<&str>)?;
@@ -139,6 +151,9 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                if window.label() == "main" {
+                    clipboard::set_main_ui_visible(false);
+                }
             }
         })
         .run(tauri::generate_context!())

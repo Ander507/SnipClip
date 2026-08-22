@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# Updater private keys — never commit
+*.key
+*.key.pub
+.tauri/
+**/.tauri/
+snipclip.key
+.env
+
 # Devlogs
 devlog/
 

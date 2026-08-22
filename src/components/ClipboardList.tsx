@@ -9,6 +9,7 @@ import {
   Trash2,
   Copy,
   Code2,
+  ScanText,
 } from "lucide-react";
 import type { ClipboardItem } from "../lib/types";
 import {
@@ -51,6 +52,7 @@ interface Props {
   selectedId: number | null;
   onSelect: (id: number) => void;
   onCopy: (id: number) => void;
+  onExtractText: (id: number) => void;
   onPin: (id: number) => void;
   onDelete: (id: number) => void;
   onPreviewImage: (id: number) => void;
@@ -61,6 +63,7 @@ export function ClipboardList({
   selectedId,
   onSelect,
   onCopy,
+  onExtractText,
   onPin,
   onDelete,
   onPreviewImage,
@@ -201,6 +204,19 @@ export function ClipboardList({
               </div>
 
               <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                {isImage && (
+                  <button
+                    type="button"
+                    title="Copy text from image (OCR)"
+                    className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onExtractText(item.id);
+                    }}
+                  >
+                    <ScanText size={13} />
+                  </button>
+                )}
                 <button
                   type="button"
                   title="Pin"
