@@ -72,6 +72,40 @@ pub fn copy_item(db: State<'_, Arc<Database>>, id: i64) -> Result<(), String> {
     }
 }
 
+// adding the open crate to rust so users can click links directly from their clipboard history
+fn normalize_open_url(raw: &str) -> Result<String, String> {
+    let mut s = raw.trim();
+    if s.is_empty() {
+        return Err("url is empty".into());
+    }
+    const TRAILING: &[char] = &['.', ',', ';', ':', '!', '?', ')', '}', ']', '\'', '"'];
+    while s.ends_with(TRAILING) {
+        s = &s[..s.len() - s.chars().last().unwrap().len_utf8()];
+    }
+    if s.starts_with("www.") {
+        return Ok(format!("https://{s}"));
+    }
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return Ok(s.to_string());
+    }
+    Err("invalid url".into())
+}
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let href = normalize_open_url(&url)?;
+    open::that(&href).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_clipboard_item(
+    db: State<'_, Arc<Database>>,
+    id: i64,
+    content: String,
+) -> Result<ClipboardItem, String> {
+    db.update_text_content(id, &content)
+}
+
 #[tauri::command]
 pub fn capture_screen() -> Result<CaptureResult, String> {
     snip::capture_primary_monitor()

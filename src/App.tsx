@@ -13,6 +13,8 @@ import {
   deleteItem,
   listItems,
   togglePin,
+  openUrl,
+  updateClipboardItem,
   getSettings,
   formatHotkeyShort,
   beginSnip,
@@ -208,6 +210,25 @@ function App() {
     }
   }
 
+  async function handleOpenLink(url: string) {
+    try {
+      await openUrl(url);
+    } catch (err) {
+      setStatus(String(err), 1600);
+    }
+  }
+
+  async function handleUpdateItem(id: number, content: string) {
+    try {
+      await updateClipboardItem(id, content);
+      await refresh();
+      setStatus("Snippet updated", 1200);
+    } catch (err) {
+      setStatus(String(err), 1600);
+      await refresh();
+    }
+  }
+
   async function handleClear() {
     try {
       closeImagePreview();
@@ -389,6 +410,8 @@ function App() {
                 onPin={(id) => void handlePin(id)}
                 onDelete={(id) => void handleDelete(id)}
                 onPreviewImage={(id) => void openImagePreview(id)}
+                onOpenLink={(url) => void handleOpenLink(url)}
+                onUpdate={(id, content) => void handleUpdateItem(id, content)}
               />
               {status && (
                 <div className="border-t border-line px-4 py-2 text-[11px] text-accent">

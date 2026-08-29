@@ -43,17 +43,7 @@ Start-Process .\SnipClip\SnipClip.exe
 
 Or grab the `.msi` / `.exe` / portable `.zip` from [Releases](https://github.com/Ander507/SnipClip/releases/latest).
 
-### Linux
-
-**AppImage (most distros):**
-
-```bash
-curl -sL https://api.github.com/repos/Ander507/SnipClip/releases/latest \
-  | grep -oE 'https://[^"]+_amd64\.AppImage' | head -1 \
-  | xargs -I{} curl -L {} -o SnipClip.AppImage
-chmod +x SnipClip.AppImage
-./SnipClip.AppImage
-```
+### Linux Installation
 
 **Debian / Ubuntu (`.deb`):**
 
@@ -61,12 +51,25 @@ chmod +x SnipClip.AppImage
 curl -sL https://api.github.com/repos/Ander507/SnipClip/releases/latest \
   | grep -oE 'https://[^"]+_amd64\.deb' | head -1 \
   | xargs -I{} curl -L {} -o snipclip.deb
-sudo apt install ./snipclip.deb
+sudo dpkg -i snipclip_*_amd64.deb || sudo apt-get install -f
+```
+
+**Universal Linux (`.AppImage`):**
+
+```bash
+curl -sL https://api.github.com/repos/Ander507/SnipClip/releases/latest \
+  | grep -oE 'https://[^"]+_amd64\.AppImage' | head -1 \
+  | xargs -I{} curl -L {} -o SnipClip.AppImage
+chmod +x SnipClip_*_amd64.AppImage
+./SnipClip_*_amd64.AppImage
 ```
 
 With [GitHub CLI](https://cli.github.com/):
 
 ```bash
+gh release download -R Ander507/SnipClip -p '*amd64.deb' --clobber
+sudo dpkg -i snipclip_*_amd64.deb || sudo apt-get install -f
+
 gh release download -R Ander507/SnipClip -p '*amd64.AppImage' --clobber
 chmod +x SnipClip_*_amd64.AppImage && ./SnipClip_*_amd64.AppImage
 ```
@@ -113,7 +116,9 @@ That’s it for day-to-day use. First launch may compile the Rust side — give 
 - **Search & filters** — All / Text / Images / Links / Pinned, instant search, ↑↓ / `j` `k` keyboard nav
 - **Region snip** — translucent overlay → crop → annotate (pen, arrow, rect, highlight, blur, callouts, color picker)
 - **Pause & ignore list** — stop capture temporarily, or skip noisy apps (e.g. dictation)
-- **Themes** — dark/light, accent presets, full custom color editor
+- **Clickable links** — open URLs from the vault in your default browser (trailing punctuation stripped)
+- **Inline edit** — tweak text/links before pasting; **Ctrl+Enter** save, **Esc** cancel
+- **Themes** — dark/light, accent presets, glass, backgrounds, save/import theme packs
 - **OCR** — copy text from a snip (Windows)
 - **Auto-updater** — check for signed updates from Settings (packaged installs)
 - **Re-edit from vault** — open a past screenshot and annotate again

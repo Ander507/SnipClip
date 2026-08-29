@@ -29,6 +29,14 @@ export function copyItem(id: number): Promise<void> {
   return invoke("copy_item", { id });
 }
 
+export function openUrl(url: string): Promise<void> {
+  return invoke("open_url", { url });
+}
+
+export function updateClipboardItem(id: number, content: string): Promise<ClipboardItem> {
+  return invoke("update_clipboard_item", { id, content });
+}
+
 export function getItem(id: number): Promise<ClipboardItem | null> {
   return invoke("get_item", { id });
 }

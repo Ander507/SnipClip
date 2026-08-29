@@ -32,6 +32,8 @@ pub fn run() {
             commands::delete_item,
             commands::clear_history,
             commands::copy_item,
+            commands::open_url,
+            commands::update_clipboard_item,
             commands::capture_screen,
             commands::capture_screen_region,
             commands::save_snip,

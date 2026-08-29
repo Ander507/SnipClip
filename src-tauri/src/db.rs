@@ -615,6 +615,62 @@ impl Database {
         Ok(())
     }
 
+    /// wiring up inline text editing so users can tweak their copied snippets before pasting
+    pub fn update_text_content(&self, id: i64, content: &str) -> Result<ClipboardItem, String> {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return Err("content cannot be empty".into());
+        }
+        if trimmed.len() > 500_000 {
+            return Err("content is too long".into());
+        }
+
+        let preview: String = trimmed.chars().take(120).collect();
+        let content_type = if trimmed.starts_with("http://")
+            || trimmed.starts_with("https://")
+            || trimmed.starts_with("www.")
+        {
+            "link"
+        } else {
+            "text"
+        };
+
+        const MAX_ATTEMPTS: u32 = 6;
+        for attempt in 0..MAX_ATTEMPTS {
+            match self.try_update_text_content(id, trimmed, &preview, content_type) {
+                Ok(item) => return Ok(item),
+                Err(e) if is_db_busy(&e) && attempt + 1 < MAX_ATTEMPTS => {
+                    std::thread::sleep(std::time::Duration::from_millis(25 * (attempt + 1) as u64));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err("database is busy — try saving again".into())
+    }
+
+    fn try_update_text_content(
+        &self,
+        id: i64,
+        content: &str,
+        preview: &str,
+        content_type: &str,
+    ) -> Result<ClipboardItem, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let updated = conn
+            .execute(
+                "UPDATE items SET content = ?1, preview = ?2, content_type = ?3
+                 WHERE id = ?4 AND content_type NOT IN ('image', 'screenshot')",
+                params![content, preview, content_type, id],
+            )
+            .map_err(|e| e.to_string())?;
+        if updated == 0 {
+            return Err("item not found or not editable".into());
+        }
+        drop(conn);
+        self.get(id)?
+            .ok_or_else(|| "item not found".to_string())
+    }
+
     pub fn clear_unpinned(&self) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         // Batch deletes so a vault full of large images doesn't lock the DB in one huge statement.
@@ -633,6 +689,11 @@ impl Database {
         }
         Ok(())
     }
+}
+
+fn is_db_busy(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    lower.contains("database is locked") || lower.contains("database busy") || lower.contains("busy")
 }
 
 fn system_uptime_secs() -> Option<u64> {
