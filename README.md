@@ -3,7 +3,7 @@
 A private desktop clipboard history, screenshot editor, and screen recorder that stays out of the way until you need it.
 
 <p align="center">
-  <img src="logo.png" alt="SnipClip logo" width="160" />
+  <img src="logo-source.png" alt="SnipClip logo" width="160" />
 </p>
 
 <p align="center">

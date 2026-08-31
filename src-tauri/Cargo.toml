@@ -1,6 +1,6 @@
 [package]
 name = "snipclip"
-version = "1.2.0"
+version = "1.2.1"
 description = "Lightning-fast clipboard manager and screenshot suite"
 authors = ["you"]
 edition = "2021"

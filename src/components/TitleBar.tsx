@@ -21,7 +21,7 @@ export function TitleBar({ paused, onTogglePause }: Props) {
           alt=""
           width={16}
           height={16}
-          className="pointer-events-none h-4 w-4 rounded-[3px]"
+          className="pointer-events-none h-4 w-4"
           draggable={false}
         />
         <span className="text-xs font-semibold tracking-wide text-fg-secondary">
