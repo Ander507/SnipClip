@@ -7,6 +7,7 @@ use std::sync::Mutex;
 pub const MAX_HISTORY: usize = 500;
 pub const DEFAULT_HOTKEY_CLIPBOARD: &str = "Control+Shift+V";
 pub const DEFAULT_HOTKEY_SNIP: &str = "Control+Shift+S";
+pub const DEFAULT_HOTKEY_RECORD: &str = "Control+Shift+R";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +41,8 @@ pub const CLEAR_INTERVAL_WEEKLY: &str = "weekly";
 pub struct AppSettings {
     pub hotkey_clipboard: String,
     pub hotkey_snip: String,
+    #[serde(default = "default_hotkey_record")]
+    pub hotkey_record: String,
     /// Wipe unpinned items when a new OS boot is detected.
     pub clear_on_boot: bool,
     /// "never" | "reboot" | "daily" | "weekly"
@@ -67,6 +70,20 @@ pub struct AppSettings {
     /// Process names whose clipboard writes are not stored (e.g. "WhisperFlow.exe").
     #[serde(default)]
     pub ignore_list: Vec<String>,
+    /// When true, the snip button waits before opening the overlay (stealth capture).
+    #[serde(default)]
+    pub snip_delay_enabled: bool,
+    /// Milliseconds to wait before snip overlay (e.g. 3000).
+    #[serde(default = "default_snip_delay_ms")]
+    pub snip_delay_ms: u32,
+}
+
+fn default_snip_delay_ms() -> u32 {
+    3000
+}
+
+fn default_hotkey_record() -> String {
+    DEFAULT_HOTKEY_RECORD.to_string()
 }
 
 impl Default for AppSettings {
@@ -74,6 +91,7 @@ impl Default for AppSettings {
         Self {
             hotkey_clipboard: DEFAULT_HOTKEY_CLIPBOARD.to_string(),
             hotkey_snip: DEFAULT_HOTKEY_SNIP.to_string(),
+            hotkey_record: DEFAULT_HOTKEY_RECORD.to_string(),
             clear_on_boot: false,
             clear_interval: CLEAR_INTERVAL_NEVER.to_string(),
             last_cleanup: 0,
@@ -86,6 +104,8 @@ impl Default for AppSettings {
             theme_translucency: 0,
             theme_background_image: None,
             ignore_list: Vec::new(),
+            snip_delay_enabled: false,
+            snip_delay_ms: default_snip_delay_ms(),
         }
     }
 }
@@ -115,11 +135,7 @@ fn parse_ignore_list(raw: String) -> Vec<String> {
     if let Ok(list) = serde_json::from_str::<Vec<String>>(&raw) {
         return normalize_ignore_list(list);
     }
-    normalize_ignore_list(
-        raw.split(',')
-            .map(|s| s.trim().to_string())
-            .collect(),
-    )
+    normalize_ignore_list(raw.split(',').map(|s| s.trim().to_string()).collect())
 }
 
 fn escape_like(input: &str) -> String {
@@ -177,6 +193,9 @@ impl Database {
         }
         if self.get_setting("hotkey_snip")?.is_none() {
             self.set_setting("hotkey_snip", &defaults.hotkey_snip)?;
+        }
+        if self.get_setting("hotkey_record")?.is_none() {
+            self.set_setting("hotkey_record", &defaults.hotkey_record)?;
         }
         if self.get_setting("clear_on_boot")?.is_none() {
             self.set_setting("clear_on_boot", "0")?;
@@ -278,6 +297,15 @@ impl Database {
             .get_setting("ignore_list")?
             .map(parse_ignore_list)
             .unwrap_or_default();
+        let snip_delay_enabled = self
+            .get_setting("snip_delay_enabled")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let snip_delay_ms = self
+            .get_setting("snip_delay_ms")?
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or_else(default_snip_delay_ms)
+            .clamp(500, 30_000);
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -285,6 +313,9 @@ impl Database {
             hotkey_snip: self
                 .get_setting("hotkey_snip")?
                 .unwrap_or_else(|| DEFAULT_HOTKEY_SNIP.to_string()),
+            hotkey_record: self
+                .get_setting("hotkey_record")?
+                .unwrap_or_else(|| DEFAULT_HOTKEY_RECORD.to_string()),
             clear_on_boot,
             clear_interval,
             last_cleanup,
@@ -297,12 +328,15 @@ impl Database {
             theme_translucency,
             theme_background_image,
             ignore_list,
+            snip_delay_enabled,
+            snip_delay_ms,
         })
     }
 
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
         self.set_setting("hotkey_clipboard", &settings.hotkey_clipboard)?;
         self.set_setting("hotkey_snip", &settings.hotkey_snip)?;
+        self.set_setting("hotkey_record", &settings.hotkey_record)?;
         self.set_setting(
             "clear_on_boot",
             if settings.clear_on_boot { "1" } else { "0" },
@@ -341,7 +375,11 @@ impl Database {
         }
         self.set_setting(
             "theme_glassmorphic",
-            if settings.theme_glassmorphic { "1" } else { "0" },
+            if settings.theme_glassmorphic {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.set_setting(
             "theme_translucency",
@@ -352,9 +390,20 @@ impl Database {
             settings.theme_background_image.as_deref().unwrap_or(""),
         )?;
         let ignore = normalize_ignore_list(settings.ignore_list.clone());
-        let ignore_json =
-            serde_json::to_string(&ignore).unwrap_or_else(|_| "[]".to_string());
+        let ignore_json = serde_json::to_string(&ignore).unwrap_or_else(|_| "[]".to_string());
         self.set_setting("ignore_list", &ignore_json)?;
+        self.set_setting(
+            "snip_delay_enabled",
+            if settings.snip_delay_enabled {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.set_setting(
+            "snip_delay_ms",
+            &settings.snip_delay_ms.clamp(500, 30_000).to_string(),
+        )?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }
@@ -423,19 +472,14 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
 
         let last: Vec<(String, String)> = conn
-            .prepare(
-                "SELECT content_type, content FROM items ORDER BY id DESC LIMIT 8",
-            )
+            .prepare("SELECT content_type, content FROM items ORDER BY id DESC LIMIT 8")
             .map_err(|e| e.to_string())?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
             .collect();
 
-        if last
-            .iter()
-            .any(|(t, c)| t == content_type && c == content)
-        {
+        if last.iter().any(|(t, c)| t == content_type && c == content) {
             return Err("duplicate".into());
         }
 
@@ -490,8 +534,7 @@ impl Database {
             return Err("item not found".into());
         }
         drop(conn);
-        self.get(id)?
-            .ok_or_else(|| "item not found".to_string())
+        self.get(id)?.ok_or_else(|| "item not found".to_string())
     }
 
     pub fn list(
@@ -569,6 +612,15 @@ impl Database {
             items.push(row.map_err(|e| e.to_string())?);
         }
         Ok(items)
+    }
+
+    // wiring up the sqlite search command to filter history in real-time as the user types
+    pub fn search_clipboard(&self, query: &str) -> Result<Vec<ClipboardItem>, String> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return self.list(None, None, 10);
+        }
+        self.list(None, Some(trimmed), 10)
     }
 
     pub fn get(&self, id: i64) -> Result<Option<ClipboardItem>, String> {
@@ -667,8 +719,7 @@ impl Database {
             return Err("item not found or not editable".into());
         }
         drop(conn);
-        self.get(id)?
-            .ok_or_else(|| "item not found".to_string())
+        self.get(id)?.ok_or_else(|| "item not found".to_string())
     }
 
     pub fn clear_unpinned(&self) -> Result<(), String> {
@@ -693,7 +744,9 @@ impl Database {
 
 fn is_db_busy(err: &str) -> bool {
     let lower = err.to_lowercase();
-    lower.contains("database is locked") || lower.contains("database busy") || lower.contains("busy")
+    lower.contains("database is locked")
+        || lower.contains("database busy")
+        || lower.contains("busy")
 }
 
 fn system_uptime_secs() -> Option<u64> {

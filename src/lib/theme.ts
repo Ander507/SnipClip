@@ -281,6 +281,25 @@ export function applyTheme(
   }
 }
 
+/** Apply theme from persisted app settings (custom colors, glass, wallpaper). */
+export function applyThemeFromSettings(settings: ThemeApplyInput & {
+  themeUseCustom?: boolean;
+  themeCustom?: ThemeCustomColors | null;
+  themeGlassmorphic?: boolean;
+  themeTranslucency?: number;
+  themeBackgroundImage?: string | null;
+}) {
+  applyTheme({
+    themeMode: settings.themeMode,
+    accentColor: settings.accentColor,
+    themeUseCustom: settings.themeUseCustom ?? false,
+    themeCustom: settings.themeCustom ?? null,
+    themeGlassmorphic: settings.themeGlassmorphic ?? false,
+    themeTranslucency: settings.themeTranslucency ?? 0,
+    themeBackgroundImage: settings.themeBackgroundImage ?? null,
+  });
+}
+
 export function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;

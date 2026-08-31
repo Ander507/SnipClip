@@ -18,18 +18,25 @@ import {
   getSettings,
   formatHotkeyShort,
   beginSnip,
+  delayedSnip,
   getItem,
   getClipboardPaused,
   toggleClipboardPaused,
   copyTextFromImage,
   isOcrAvailable,
-  saveSnipToVault,
+  showMainWindow,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
 import { applyTheme } from "./lib/theme";
 import { itemMatchesCategory, itemMatchesSearch } from "./lib/search";
 import { useStatusToast } from "./lib/useStatusToast";
+
+interface ScreenshotEditorRequest {
+  vaultId: number;
+  width: number;
+  height: number;
+}
 
 function App() {
   const [items, setItems] = useState<ClipboardItem[]>([]);
@@ -89,6 +96,8 @@ function App() {
           themeGlassmorphic: s.themeGlassmorphic ?? false,
           themeTranslucency: s.themeTranslucency ?? 0,
           themeBackgroundImage: s.themeBackgroundImage ?? null,
+          snipDelayEnabled: s.snipDelayEnabled ?? false,
+          snipDelayMs: s.snipDelayMs ?? 3000,
         };
         setSettings(next);
         applyTheme(next);
@@ -101,8 +110,22 @@ function App() {
   const startSnip = useCallback(async () => {
     try {
       setStatus(null);
-      // Rust hides main, captures, shows the preloaded snipper window
-      await beginSnip();
+      const delayMs = settings.snipDelayEnabled ? settings.snipDelayMs : 0;
+      if (delayMs > 0) {
+        setStatus(`Snipping in ${Math.round(delayMs / 1000)}s… switch apps, hands off keyboard`, delayMs);
+        await delayedSnip(delayMs);
+      } else {
+        await beginSnip();
+      }
+    } catch (err) {
+      setStatus(`Snip failed: ${err}`);
+    }
+  }, [settings.snipDelayEnabled, settings.snipDelayMs]);
+
+  const startDelayedSnip = useCallback(async (delayMs = 3000) => {
+    try {
+      setStatus(`Snipping in ${Math.round(delayMs / 1000)}s… switch apps, hands off keyboard`, delayMs);
+      await delayedSnip(delayMs);
     } catch (err) {
       setStatus(`Snip failed: ${err}`);
     }
@@ -136,28 +159,35 @@ function App() {
       setClipboardPaused(Boolean(event.payload));
     }).then((u) => unsubs.push(u));
 
-    // Cropped region finished in the snipper window — always vault as Screenshots
-    void listen<CaptureResult>("snip-complete", (event) => {
-      const result = event.payload;
-      if (!result) return;
+    void listen<ScreenshotEditorRequest>("open-screenshot-editor", (event) => {
+      const payload = event.payload;
+      if (!payload) return;
       void (async () => {
-        let vaultId: number | undefined;
+        await showMainWindow();
+        setView("vault");
+        setStatus("Loading editor…", 1200);
+        await new Promise((r) => setTimeout(r, 50));
         try {
-          const item = await saveSnipToVault(result.dataUrl, result.width, result.height);
-          vaultId = item.id;
-          const cat = categoryRef.current;
-          const q = debouncedQueryRef.current;
-          if (itemMatchesCategory(item, cat) && itemMatchesSearch(item, q)) {
-            setItems((prev) => {
-              const base = Array.isArray(prev) ? prev : [];
-              return [item, ...base.filter((i) => i.id !== item.id)].slice(0, 500);
-            });
-            setSelectedId(item.id);
+          const full = await getItem(payload.vaultId);
+          const src =
+            full?.content?.startsWith("data:image") ? full.content
+            : full?.preview?.startsWith("data:image") ? full.preview
+            : null;
+          if (!src) {
+            setStatus("Screenshot not found", 2000);
+            return;
           }
+          setCapture({
+            dataUrl: src,
+            width: payload.width,
+            height: payload.height,
+            monitorName: "screenshot",
+            vaultId: payload.vaultId,
+          });
+          setStatus(null);
         } catch (err) {
-          console.error(err);
+          setStatus(String(err), 2000);
         }
-        setCapture({ ...result, vaultId });
       })();
     }).then((u) => unsubs.push(u));
 
@@ -375,11 +405,13 @@ function App() {
             setView("vault");
           }}
           onSnip={() => void startSnip()}
+          onDelayedSnip={() => void startDelayedSnip(3000)}
           onClear={() => void handleClear()}
           onSettings={() => setView("settings")}
           settingsOpen={view === "settings"}
           count={items.length}
           snipHotkeyLabel={formatHotkeyShort(settings.hotkeySnip)}
+          snipDelayEnabled={settings.snipDelayEnabled}
         />
         <main className="flex min-w-0 flex-1 flex-col bg-app">
           {view === "settings" ? (
@@ -428,8 +460,8 @@ function App() {
         loading={previewLoading}
         ocrAvailable={ocrAvailable}
         onClose={closeImagePreview}
-        onCopy={() => {
-          if (previewId != null) void handleCopy(previewId);
+        onCopy={async () => {
+          if (previewId != null) await handleCopy(previewId);
         }}
         onExtractText={() => {
           if (previewId != null) void handleExtractText(previewId);

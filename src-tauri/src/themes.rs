@@ -169,7 +169,9 @@ pub fn import_theme_pack_json(app: &AppHandle, json: &str) -> Result<ThemePack, 
 }
 
 pub fn resolve_background_url(app: &AppHandle, stored: &str) -> Result<String, String> {
-    if stored.starts_with("data:") || stored.starts_with("http://") || stored.starts_with("https://")
+    if stored.starts_with("data:")
+        || stored.starts_with("http://")
+        || stored.starts_with("https://")
     {
         return Ok(stored.to_string());
     }

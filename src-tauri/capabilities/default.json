@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for main and snipper windows",
-  "windows": ["main", "snipper"],
+  "windows": ["main", "snipper", "screenshot_popup", "recorder_bar", "command_palette"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
@@ -20,6 +20,7 @@
     "core:window:allow-scale-factor",
     "core:window:allow-outer-position",
     "core:window:allow-outer-size",
+    "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "core:window:allow-create",

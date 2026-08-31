@@ -185,7 +185,9 @@ where
 fn classify_text(text: &str) -> (&'static str, String) {
     let trimmed = text.trim();
     let preview: String = trimmed.chars().take(120).collect();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("www.")
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("www.")
     {
         ("link", preview)
     } else {
@@ -249,10 +251,8 @@ pub fn start_monitor(app: AppHandle) {
 
             if RESYNC_SEEN.swap(false, Ordering::SeqCst) {
                 // Align with OS clipboard without writing into the vault again.
-                last_text = with_clipboard_retry(|c| c.get_text())
-                    .ok()
-                    .filter(|t| !t.is_empty());
-                last_image_hash = with_clipboard_retry(|c| c.get_image())
+                last_text = read_clipboard_text().ok().filter(|t| !t.is_empty());
+                last_image_hash = read_clipboard_image()
                     .ok()
                     .map(|img| image_content_hash(&img));
             }
@@ -272,12 +272,12 @@ pub fn start_monitor(app: AppHandle) {
 
             if is_paused() {
                 // Track clipboard state while paused so unpausing doesn't re-insert stale content.
-                if let Ok(text) = with_clipboard_retry(|c| c.get_text()) {
+                if let Ok(text) = read_clipboard_text() {
                     if !text.is_empty() && Some(&text) != last_text.as_ref() {
                         last_text = Some(text);
                     }
                 }
-                if let Ok(img) = with_clipboard_retry(|c| c.get_image()) {
+                if let Ok(img) = read_clipboard_image() {
                     let hash = image_content_hash(&img);
                     if Some(hash) != last_image_hash {
                         last_image_hash = Some(hash);
@@ -289,7 +289,7 @@ pub fn start_monitor(app: AppHandle) {
 
             let skip_insert = should_skip_insert();
 
-            if let Ok(text) = with_clipboard_retry(|c| c.get_text()) {
+            if let Ok(text) = read_clipboard_text() {
                 if !text.is_empty() && Some(&text) != last_text.as_ref() {
                     last_text = Some(text.clone());
                     if !skip_insert {
@@ -301,7 +301,7 @@ pub fn start_monitor(app: AppHandle) {
                 }
             }
 
-            if let Ok(img) = with_clipboard_retry(|c| c.get_image()) {
+            if let Ok(img) = read_clipboard_image() {
                 let hash = image_content_hash(&img);
                 if Some(hash) != last_image_hash {
                     last_image_hash = Some(hash);
@@ -327,6 +327,12 @@ pub fn stop_monitor() {
 
 pub fn write_text_to_clipboard(text: &str) -> Result<(), String> {
     suppress_monitor(800);
+    if crate::wayland::is_wayland() {
+        #[cfg(target_os = "linux")]
+        {
+            return crate::wayland::copy_text(text);
+        }
+    }
     let owned = text.to_string();
     with_clipboard_retry(move |c| c.set_text(owned.clone()))
 }
@@ -337,6 +343,15 @@ pub fn write_image_to_clipboard(data_url: &str) -> Result<(), String> {
         .or_else(|| data_url.strip_prefix("data:image/jpeg;base64,"))
         .unwrap_or(data_url);
     let bytes = B64.decode(b64).map_err(|e| e.to_string())?;
+
+    suppress_monitor(800);
+    if crate::wayland::is_wayland() {
+        #[cfg(target_os = "linux")]
+        {
+            return crate::wayland::copy_image_png(&bytes);
+        }
+    }
+
     let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
@@ -348,6 +363,40 @@ pub fn write_image_to_clipboard(data_url: &str) -> Result<(), String> {
             width: w as usize,
             height: h as usize,
             bytes: std::borrow::Cow::Owned(raw.clone()),
+        })
+    })
+}
+
+fn read_clipboard_text() -> Result<String, String> {
+    if crate::wayland::is_wayland() {
+        #[cfg(target_os = "linux")]
+        {
+            return crate::wayland::paste_text();
+        }
+    }
+    with_clipboard_retry(|c| c.get_text())
+}
+
+fn read_clipboard_image() -> Result<ImageData<'static>, String> {
+    if crate::wayland::is_wayland() {
+        #[cfg(target_os = "linux")]
+        {
+            let png = crate::wayland::paste_image_png()?;
+            let img = image::load_from_memory(&png).map_err(|e| e.to_string())?;
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            return Ok(ImageData {
+                width: w as usize,
+                height: h as usize,
+                bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+            });
+        }
+    }
+    with_clipboard_retry(|c| {
+        c.get_image().map(|img| ImageData {
+            width: img.width,
+            height: img.height,
+            bytes: std::borrow::Cow::Owned(img.bytes.into_owned()),
         })
     })
 }

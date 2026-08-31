@@ -15,10 +15,11 @@ import {
 } from "lucide-react";
 import type { ClipboardItem } from "../lib/types";
 import {
-  codePreview,
   detectLanguage,
   languageLabel,
 } from "../lib/codeDetect";
+import { CodePreview } from "./CodePreview";
+import { SmartTextPreview } from "./SmartTextPreview";
 import { displayUrl, isLinkItem, linkHrefFromText } from "../lib/urls";
 
 function formatTime(iso: string) {
@@ -151,15 +152,7 @@ export function ClipboardItemRow({
                 : item.preview || "Image"}
           </p>
         ) : isCode ? (
-          <div className="my-0.5 overflow-hidden rounded-md border border-line bg-inset">
-            <div className="flex items-center justify-between border-b border-line bg-muted px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-fg-muted">
-              <span>{languageLabel(lang)}</span>
-              <span className="text-fg-faint">snippet</span>
-            </div>
-            <pre className="max-h-36 overflow-x-auto overflow-y-auto whitespace-pre-wrap p-2.5 font-mono text-xs leading-relaxed text-accent">
-              <code>{codePreview(textBody)}</code>
-            </pre>
-          </div>
+          <CodePreview content={textBody} />
         ) : editing ? (
           <textarea
             ref={textareaRef}
@@ -194,9 +187,7 @@ export function ClipboardItemRow({
             <span className="truncate">{displayUrl(textBody)}</span>
           </button>
         ) : (
-          <p className="truncate text-xs font-medium text-fg-secondary">
-            {item.preview || item.content}
-          </p>
+          <SmartTextPreview text={item.preview || item.content || ""} compact />
         )}
 
         <div className="mt-1 flex items-center gap-2">

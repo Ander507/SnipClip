@@ -132,7 +132,13 @@ export function detectLanguage(text: string | null | undefined): DetectedLanguag
 
 export function isCodeSnippet(content: string, contentType: string): boolean {
   if (contentType !== "text") return false;
-  return detectLanguage(content) !== "plain";
+  if (detectLanguage(content) !== "plain") return true;
+  const t = content.trim();
+  if (t.length < 4) return false;
+  const markers = ["function", "const", "import", "fn", "class", "def", "var", "let"];
+  if (markers.some((m) => t.includes(m))) return true;
+  if (t.includes("{") && t.includes("}")) return true;
+  return false;
 }
 
 export function stripCodeFences(content: string): string {
@@ -164,6 +170,25 @@ export function languageLabel(lang: DetectedLanguage): string {
     go: "Go",
     code: "Code",
     plain: "Text",
+  };
+  return map[lang];
+}
+
+export function highlighterLanguage(lang: DetectedLanguage): string {
+  const map: Record<DetectedLanguage, string> = {
+    rust: "rust",
+    csharp: "csharp",
+    java: "java",
+    typescript: "typescript",
+    javascript: "javascript",
+    python: "python",
+    html: "markup",
+    css: "css",
+    json: "json",
+    sql: "sql",
+    go: "go",
+    code: "javascript",
+    plain: "text",
   };
   return map[lang];
 }

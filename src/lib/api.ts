@@ -13,6 +13,22 @@ export function listItems(
   });
 }
 
+export function searchClipboard(query: string): Promise<ClipboardItem[]> {
+  return invoke("search_clipboard", { query });
+}
+
+export function paletteCopyItem(id: number): Promise<void> {
+  return invoke("palette_copy_item", { id });
+}
+
+export function hideCommandPalette(): Promise<void> {
+  return invoke("hide_command_palette");
+}
+
+export function showCommandPalette(): Promise<void> {
+  return invoke("show_command_palette");
+}
+
 export function togglePin(id: number): Promise<boolean> {
   return invoke("toggle_pin", { id });
 }
@@ -117,16 +133,28 @@ export function hideMainWindow(): Promise<void> {
   return invoke("hide_main_window");
 }
 
-export function beginSnip(): Promise<void> {
-  return invoke("begin_snip");
+export function showMainWindow(): Promise<void> {
+  return invoke("show_main_window");
+}
+
+export function beginSnip(mode?: "snip" | "record"): Promise<void> {
+  return invoke("begin_snip", { mode: mode ?? null });
+}
+
+export function beginRecord(): Promise<void> {
+  return beginSnip("record");
+}
+
+export function delayedSnip(delayMs: number): Promise<void> {
+  return invoke("delayed_snip", { delayMs });
 }
 
 export function hideSnipper(): Promise<void> {
   return invoke("hide_snipper");
 }
 
-export function closeSnipper(): Promise<void> {
-  return invoke("close_snipper");
+export function closeSnipper(restoreMain = false): Promise<void> {
+  return invoke("close_snipper", { restoreMain });
 }
 
 export function getSettings(): Promise<AppSettings> {
@@ -155,6 +183,120 @@ export function copyTextFromImage(id: number): Promise<string> {
 
 export function isOcrAvailable(): Promise<boolean> {
   return invoke("is_ocr_available");
+}
+
+export function runOcr(dataUrl: string): Promise<string> {
+  return invoke("run_ocr", { dataUrl });
+}
+
+export function copyText(text: string): Promise<void> {
+  return invoke("copy_text", { text });
+}
+
+export interface FinalizeScreenshotResult {
+  vaultId: number;
+  width: number;
+  height: number;
+  item: ClipboardItem;
+}
+
+export function finalizeScreenshot(
+  dataUrl: string,
+  width: number,
+  height: number
+): Promise<FinalizeScreenshotResult> {
+  return invoke("finalize_screenshot", { dataUrl, width, height });
+}
+
+export function closeScreenshotPopup(): Promise<void> {
+  return invoke("close_screenshot_popup");
+}
+
+export interface RecordRegion {
+  physX: number;
+  physY: number;
+  physW: number;
+  physH: number;
+}
+
+export function startRegionRecording(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fps: number,
+  format: string,
+  systemAudio = false
+): Promise<void> {
+  return invoke("start_region_recording", {
+    x,
+    y,
+    width,
+    height,
+    fps,
+    format,
+    systemAudio,
+  });
+}
+
+export function pauseRegionRecording(): Promise<boolean> {
+  return invoke("pause_region_recording");
+}
+
+export function stopRegionRecording(): Promise<string> {
+  return invoke("stop_region_recording");
+}
+
+export interface FinalizeRecordingResult {
+  vaultId: number;
+  filePath: string;
+  width: number;
+  height: number;
+  item: ClipboardItem;
+}
+
+export function finalizeRecording(
+  filePath: string,
+  format: string,
+  width: number,
+  height: number
+): Promise<FinalizeRecordingResult> {
+  return invoke("finalize_recording", { filePath, format, width, height });
+}
+
+export function showRecorderBar(args: {
+  screenX: number;
+  screenY: number;
+  region: RecordRegion;
+  format?: string;
+  fps?: number;
+}): Promise<void> {
+  return invoke("show_recorder_bar", {
+    screenX: args.screenX,
+    screenY: args.screenY,
+    region: {
+      physX: args.region.physX,
+      physY: args.region.physY,
+      physW: args.region.physW,
+      physH: args.region.physH,
+    },
+    format: args.format ?? "gif",
+    fps: args.fps ?? 0,
+  });
+}
+
+export function hideRecorderBar(): Promise<void> {
+  return invoke("hide_recorder_bar");
+}
+
+export interface RecorderBarPayload {
+  region: RecordRegion;
+  format?: string;
+  fps?: number;
+}
+
+export function recorderBarReady(): Promise<RecorderBarPayload | null> {
+  return invoke("recorder_bar_ready");
 }
 
 export function formatHotkeyShort(accel: string): string {

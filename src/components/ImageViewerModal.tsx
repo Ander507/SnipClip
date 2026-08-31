@@ -6,7 +6,7 @@ interface Props {
   loading?: boolean;
   ocrAvailable?: boolean;
   onClose: () => void;
-  onCopy: () => void;
+  onCopy: () => void | Promise<void>;
   onExtractText: () => void;
   onEdit: (imageSrc: string) => void;
 }
@@ -102,8 +102,7 @@ export function ImageViewerModal({
             type="button"
             disabled={loading || !imageSrc}
             onClick={() => {
-              onCopy();
-              onClose();
+              void Promise.resolve(onCopy()).finally(() => onClose());
             }}
             className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-accent-fg transition hover:brightness-110 disabled:opacity-40"
           >

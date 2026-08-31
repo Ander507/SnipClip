@@ -7,6 +7,12 @@ export function itemMatchesSearch(item: ClipboardItem, query: string): boolean {
   if (item.contentType === "image" || item.contentType === "screenshot") {
     return item.preview.toLowerCase().includes(q);
   }
+  if (item.contentType === "gif" || item.contentType === "video") {
+    return (
+      item.preview.toLowerCase().includes(q) ||
+      item.content.toLowerCase().includes(q)
+    );
+  }
   return (
     item.preview.toLowerCase().includes(q) ||
     item.content.toLowerCase().includes(q)

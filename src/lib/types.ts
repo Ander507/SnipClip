@@ -26,6 +26,7 @@ import type { ThemeMode, AccentColor, ThemeCustomColors } from "./theme";
 export interface AppSettings {
   hotkeyClipboard: string;
   hotkeySnip: string;
+  hotkeyRecord: string;
   clearOnBoot: boolean;
   /** "never" | "reboot" | "daily" | "weekly" */
   clearInterval: string;
@@ -44,11 +45,16 @@ export interface AppSettings {
   themeBackgroundImage: string | null;
   /** Process names whose copies are not stored (e.g. WhisperFlow.exe). */
   ignoreList: string[];
+  /** When true, Snip waits before opening the overlay (stealth capture). */
+  snipDelayEnabled: boolean;
+  /** Milliseconds to wait before snip overlay (default 3000). */
+  snipDelayMs: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   hotkeyClipboard: "Control+Shift+V",
   hotkeySnip: "Control+Shift+S",
+  hotkeyRecord: "Control+Shift+R",
   clearOnBoot: false,
   clearInterval: "never",
   lastCleanup: 0,
@@ -61,6 +67,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeTranslucency: 0,
   themeBackgroundImage: null,
   ignoreList: [],
+  snipDelayEnabled: false,
+  snipDelayMs: 3000,
 };
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";

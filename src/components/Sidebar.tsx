@@ -9,6 +9,7 @@ import {
   Camera,
   Settings,
   Aperture,
+  Timer,
 } from "lucide-react";
 import type { Category } from "../lib/types";
 
@@ -25,22 +26,26 @@ interface Props {
   category: Category;
   onCategory: (c: Category) => void;
   onSnip: () => void;
+  onDelayedSnip: () => void;
   onClear: () => void;
   onSettings: () => void;
   settingsOpen: boolean;
   count: number;
   snipHotkeyLabel: string;
+  snipDelayEnabled: boolean;
 }
 
 export function Sidebar({
   category,
   onCategory,
   onSnip,
+  onDelayedSnip,
   onClear,
   onSettings,
   settingsOpen,
   count,
   snipHotkeyLabel,
+  snipDelayEnabled,
 }: Props) {
   return (
     <aside className="flex w-52 shrink-0 flex-col justify-between border-r border-line bg-raised p-3">
@@ -76,10 +81,19 @@ export function Sidebar({
           className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-fg-muted transition hover:bg-muted hover:text-fg"
         >
           <Camera size={15} />
-          <span>Snip</span>
+          <span>{snipDelayEnabled ? "Snip (delayed)" : "Snip"}</span>
           <kbd className="ml-auto rounded bg-hover px-1.5 py-0.5 text-[9px] text-fg-muted">
             {snipHotkeyLabel}
           </kbd>
+        </button>
+        <button
+          type="button"
+          onClick={onDelayedSnip}
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-fg-muted transition hover:bg-muted hover:text-accent"
+          title="Wait 3 seconds, then snip — no keyboard near the target app"
+        >
+          <Timer size={15} />
+          <span>Snip in 3s</span>
         </button>
         <button
           type="button"

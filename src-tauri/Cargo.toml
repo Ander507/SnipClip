@@ -1,6 +1,6 @@
 [package]
 name = "snipclip"
-version = "1.1.3"
+version = "1.2.0"
 description = "Lightning-fast clipboard manager and screenshot suite"
 authors = ["you"]
 edition = "2021"
@@ -12,8 +12,21 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[profile.release]
+# whole-program optimisation across crates, at the cost of slower release builds
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+# panic = "abort" is deliberately NOT set: stop_region_recording recovers from a panicking
+# capture thread through join().map_err(), which needs unwinding to stay a recoverable error
+
+# release builds of the capture/encode hot paths are unusably slow without optimisation,
+# so keep dependencies optimised even in dev builds
+[profile.dev.package."*"]
+opt-level = 2
+
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -27,6 +40,11 @@ arboard = "3.4"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+gif = "0.13"
+ffmpeg-sidecar = "2.0"
+ocrs = "0.12"
+rten = "0.24"
+ureq = { version = "2", default-features = false, features = ["tls"] }
 xcap = "0.0.14"
 uuid = { version = "1", features = ["v4"] }
 open = "5.0"
@@ -40,4 +58,10 @@ tauri-plugin-process = "2"
 sysinfo = "0.32"
 
 [target."cfg(windows)".dependencies]
+wasapi = "0.24.0"
 win_ocr = "0.1.3"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+] }

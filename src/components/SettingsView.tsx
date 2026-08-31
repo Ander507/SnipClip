@@ -15,7 +15,13 @@ interface Props {
   onSaved: (settings: AppSettings) => void;
 }
 
-type CaptureTarget = "clipboard" | "snip" | null;
+type CaptureTarget = "clipboard" | "snip" | "record" | null;
+
+const STEALTH_SNIP_PRESETS = [
+  { label: "Ctrl + Alt + Q", value: "Control+Alt+Q" },
+  { label: "Shift + F12", value: "Shift+F12" },
+  { label: "Ctrl + Alt + F9", value: "Control+Alt+F9" },
+] as const;
 
 function displayHotkey(accel: string) {
   return accel
@@ -24,18 +30,42 @@ function displayHotkey(accel: string) {
     .replace(/\+/g, " + ");
 }
 
+const RECORD_HOTKEY_PRESETS = [
+  { label: "Ctrl + Alt + R", value: "Control+Alt+R" },
+  { label: "Ctrl + Shift + R", value: "Control+Shift+R" },
+  { label: "Ctrl + Alt + F10", value: "Control+Alt+F10" },
+] as const;
+
+function keyFromEvent(e: KeyboardEvent): string | null {
+  // Prefer e.code — on Windows Ctrl+Alt+letter often yields a symbol in e.key (AltGr / menu mnemonics).
+  if (e.code.startsWith("Key") && e.code.length === 4) {
+    return e.code.slice(3);
+  }
+  if (e.code.startsWith("Digit") && e.code.length === 6) {
+    return e.code.slice(5);
+  }
+  if (/^F\d{1,2}$/.test(e.code)) {
+    return e.code;
+  }
+  if (e.code === "Space") return "Space";
+
+  let key = e.key;
+  if (key === " ") key = "Space";
+  else if (key.length === 1) key = key.toUpperCase();
+  else if (key.startsWith("Arrow")) key = key.slice(5);
+  else if (key === "Escape") key = "Esc";
+  else return null;
+  return key;
+}
+
 function eventToAccelerator(e: KeyboardEvent): string | null {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
   const parts: string[] = [];
   if (e.ctrlKey || e.metaKey) parts.push("Control");
   if (e.altKey) parts.push("Alt");
   if (e.shiftKey) parts.push("Shift");
-  let key = e.key;
-  if (key === " ") key = "Space";
-  else if (key.length === 1) key = key.toUpperCase();
-  else if (key.startsWith("Arrow")) key = key.slice(5);
-  else if (key === "Escape") key = "Esc";
-  if (parts.length === 0) return null;
+  const key = keyFromEvent(e);
+  if (!key || parts.length === 0) return null;
   parts.push(key);
   return parts.join("+");
 }
@@ -44,6 +74,7 @@ function isDirty(a: AppSettings, b: AppSettings) {
   return (
     a.hotkeyClipboard !== b.hotkeyClipboard ||
     a.hotkeySnip !== b.hotkeySnip ||
+    a.hotkeyRecord !== b.hotkeyRecord ||
     a.clearOnBoot !== b.clearOnBoot ||
     a.clearInterval !== b.clearInterval ||
     a.launchAtStartup !== b.launchAtStartup ||
@@ -54,7 +85,9 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.themeGlassmorphic !== b.themeGlassmorphic ||
     a.themeTranslucency !== b.themeTranslucency ||
     a.themeBackgroundImage !== b.themeBackgroundImage ||
-    a.ignoreList.join("\0") !== b.ignoreList.join("\0")
+    a.ignoreList.join("\0") !== b.ignoreList.join("\0") ||
+    a.snipDelayEnabled !== b.snipDelayEnabled ||
+    a.snipDelayMs !== b.snipDelayMs
   );
 }
 
@@ -67,6 +100,9 @@ function normalizeSettings(s: AppSettings): AppSettings {
     themeGlassmorphic: s.themeGlassmorphic ?? false,
     themeTranslucency: s.themeTranslucency ?? 0,
     themeBackgroundImage: s.themeBackgroundImage ?? null,
+    snipDelayEnabled: s.snipDelayEnabled ?? false,
+    snipDelayMs: s.snipDelayMs ?? 3000,
+    hotkeyRecord: s.hotkeyRecord ?? DEFAULT_SETTINGS.hotkeyRecord,
   };
 }
 
@@ -144,6 +180,9 @@ export function SettingsView({ onClose, onSaved }: Props) {
       if (!prev) return prev;
       if (captureRef.current === "clipboard") {
         return { ...prev, hotkeyClipboard: accel };
+      }
+      if (captureRef.current === "record") {
+        return { ...prev, hotkeyRecord: accel };
       }
       return { ...prev, hotkeySnip: accel };
     });
@@ -496,13 +535,100 @@ export function SettingsView({ onClose, onSaved }: Props) {
           />
           <HotkeyRow
             label="Screenshot snipper"
-            hint="Default Ctrl + Shift + S"
+            hint="Default Ctrl + Shift + S — use stealth presets below to avoid app detectors"
             value={draft.hotkeySnip}
             active={capturing === "snip"}
             onCapture={() => setCapturing("snip")}
           />
+          <HotkeyRow
+            label="Screen recorder"
+            hint="Default Ctrl + Shift + R — opens region picker in record mode"
+            value={draft.hotkeyRecord}
+            active={capturing === "record"}
+            onCapture={() => setCapturing("record")}
+          />
+          <div className="flex flex-wrap gap-2 px-1">
+            {RECORD_HOTKEY_PRESETS.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                onClick={() =>
+                  setDraft((prev) => (prev ? { ...prev, hotkeyRecord: preset.value } : prev))
+                }
+                className={clsx(
+                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
+                  draft.hotkeyRecord === preset.value
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-line bg-raised text-fg-muted hover:border-line-strong hover:text-fg"
+                )}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2 px-1">
+            {STEALTH_SNIP_PRESETS.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                onClick={() =>
+                  setDraft((prev) => (prev ? { ...prev, hotkeySnip: preset.value } : prev))
+                }
+                className={clsx(
+                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
+                  draft.hotkeySnip === preset.value
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-line bg-raised text-fg-muted hover:border-line-strong hover:text-fg"
+                )}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           {capturing && (
             <p className="text-[12px] text-accent">Listening for a shortcut… Esc to cancel</p>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+            Stealth snip delay
+          </h3>
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-[13px] text-fg-secondary">Snipping delay</span>
+              <span className="text-[11px] text-fg-muted">
+                Wait before the overlay opens so you can switch apps without pressing keys.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.snipDelayEnabled}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, snipDelayEnabled: e.target.checked } : prev
+                )
+              }
+              className="h-4 w-4 cursor-pointer rounded"
+            />
+          </label>
+          {draft.snipDelayEnabled && (
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+              <span className="text-[13px] text-fg-secondary">Delay before snip</span>
+              <select
+                value={draft.snipDelayMs}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev ? { ...prev, snipDelayMs: Number(e.target.value) } : prev
+                  )
+                }
+                className="rounded-md border border-line bg-inset px-2 py-1.5 text-[12px] text-fg-secondary outline-none"
+              >
+                <option value={3000}>3 seconds</option>
+                <option value={5000}>5 seconds</option>
+                <option value={10000}>10 seconds</option>
+              </select>
+            </div>
           )}
         </section>
 
@@ -701,7 +827,7 @@ function HotkeyRow({
             : "border-line bg-inset text-fg-secondary hover:border-line-strong"
         )}
       >
-        {active ? "Record hotkey…" : displayHotkey(value)}
+        {active ? "Press keys…" : displayHotkey(value)}
       </button>
     </div>
   );

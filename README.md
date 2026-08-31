@@ -1,176 +1,71 @@
 # SnipClip
 
-A local desktop clipboard vault and screenshot snipper — copy history, annotate captures, stay in the tray.
+A private desktop clipboard history, screenshot editor, and screen recorder that stays out of the way until you need it.
 
 <p align="center">
-  <img src="app-icon.png" alt="SnipClip app icon" width="128" />
+  <img src="logo.png" alt="SnipClip logo" width="160" />
 </p>
 
 <p align="center">
-  <img src="docs/vault.png" alt="SnipClip clipboard vault — Images filter" width="720" />
+  <img src="docs/vault.png" alt="SnipClip clipboard vault showing captured images" width="900" />
 </p>
 
 <p align="center">
-  <img src="docs/snip.png" alt="Region snip selection overlay" width="480" />
-  &nbsp;
-  <img src="docs/settings.png" alt="SnipClip settings — startup and hotkeys" width="480" />
+  <strong><a href="https://github.com/Ander507/SnipClip/releases/latest">Download the latest release</a></strong>
 </p>
 
-> **Try it:** [Download the latest release](https://github.com/Ander507/SnipClip/releases/latest), or use an install one-liner below.
+## Quick start
 
-## Install
+1. Download the installer or portable build from the [latest release](https://github.com/Ander507/SnipClip/releases/latest).
+2. Open SnipClip. It will keep running in the system tray.
+3. Press `Ctrl+Shift+V` for the vault, `Ctrl+Shift+S` for a snip, or `Ctrl+Shift+R` to record.
 
-### Windows (PowerShell)
-
-**Installer (NSIS):**
-
-```powershell
-$r = irm https://api.github.com/repos/Ander507/SnipClip/releases/latest
-$a = $r.assets | ? name -like '*x64-setup.exe' | select -First 1
-iwr $a.browser_download_url -OutFile $a.name
-Start-Process ".\$($a.name)"
-```
-
-**Portable (no install):**
-
-```powershell
-$r = irm https://api.github.com/repos/Ander507/SnipClip/releases/latest
-$a = $r.assets | ? name -like '*x64_portable.zip' | select -First 1
-iwr $a.browser_download_url -OutFile $a.name
-Expand-Archive $a.name -DestinationPath .\SnipClip -Force
-Start-Process .\SnipClip\SnipClip.exe
-```
-
-Or grab the `.msi` / `.exe` / portable `.zip` from [Releases](https://github.com/Ander507/SnipClip/releases/latest).
-
-### Linux Installation
-
-**Debian / Ubuntu (`.deb`):**
-
-```bash
-curl -sL https://api.github.com/repos/Ander507/SnipClip/releases/latest \
-  | grep -oE 'https://[^"]+_amd64\.deb' | head -1 \
-  | xargs -I{} curl -L {} -o snipclip.deb
-sudo dpkg -i snipclip_*_amd64.deb || sudo apt-get install -f
-```
-
-**Universal Linux (`.AppImage`):**
-
-```bash
-curl -sL https://api.github.com/repos/Ander507/SnipClip/releases/latest \
-  | grep -oE 'https://[^"]+_amd64\.AppImage' | head -1 \
-  | xargs -I{} curl -L {} -o SnipClip.AppImage
-chmod +x SnipClip_*_amd64.AppImage
-./SnipClip_*_amd64.AppImage
-```
-
-With [GitHub CLI](https://cli.github.com/):
-
-```bash
-gh release download -R Ander507/SnipClip -p '*amd64.deb' --clobber
-sudo dpkg -i snipclip_*_amd64.deb || sudo apt-get install -f
-
-gh release download -R Ander507/SnipClip -p '*amd64.AppImage' --clobber
-chmod +x SnipClip_*_amd64.AppImage && ./SnipClip_*_amd64.AppImage
-```
-
-### macOS
-
-Prebuilt macOS packages aren’t published yet — build from source:
-
-```bash
-# Needs Node 20+, Rust (rustup), and Xcode CLT
-git clone https://github.com/Ander507/SnipClip.git
-cd SnipClip
-npm install
-npm run tauri build
-# App: src-tauri/target/release/bundle/macos/SnipClip.app
-open src-tauri/target/release/bundle/macos/SnipClip.app
-```
-
-For day-to-day hacking: `npm run tauri dev`.
-
-### After install
-
-SnipClip sits in the tray. Defaults:
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Shift+V` | Toggle clipboard vault |
-| `Ctrl+Shift+S` | Start region snip |
-
-Both are editable in Settings.
-
-## Quick start (from source)
-
-```bash
-npm install
-npm run tauri dev
-```
-
-That’s it for day-to-day use. First launch may compile the Rust side — give it a minute.
+The vault, snip, and record shortcuts can all be changed in Settings. Press `Alt+C` to open the quick clipboard palette from anywhere.
 
 ## Features
 
-- **Clipboard vault** — watches the system clipboard for text, links, and images; stores history in SQLite (pinned items stay safe)
-- **Search & filters** — All / Text / Images / Links / Pinned, instant search, ↑↓ / `j` `k` keyboard nav
-- **Region snip** — translucent overlay → crop → annotate (pen, arrow, rect, highlight, blur, callouts, color picker)
-- **Pause & ignore list** — stop capture temporarily, or skip noisy apps (e.g. dictation)
-- **Clickable links** — open URLs from the vault in your default browser (trailing punctuation stripped)
-- **Inline edit** — tweak text/links before pasting; **Ctrl+Enter** save, **Esc** cancel
-- **Themes** — dark/light, accent presets, glass, backgrounds, save/import theme packs
-- **OCR** — copy text from a snip (Windows)
-- **Auto-updater** — check for signed updates from Settings (packaged installs)
-- **Re-edit from vault** — open a past screenshot and annotate again
-- **Zoom & pan** — wheel zoom centered on cursor; middle-click or Shift-drag to pan
-- **Auto-clear** — optional wipe of unpinned history on reboot / daily / weekly
-- **Tray app** — close hides to tray; global hotkeys work while you’re in other apps
-- **Launch at startup** — optional login autostart; boots minimized to tray until you hit a hotkey
+- **Clipboard vault** — keeps searchable history for text, links, code, and images in a local SQLite database.
+- **Fast paste palette** — press `Alt+C`, search recent items, and copy one without opening the full app.
+- **Screenshots and annotation** — capture a region, then draw, highlight, blur, add arrows or callouts, pick colors, zoom, and pan.
+- **Screen recording** — record any region as MP4 or GIF at a smooth adaptive frame rate, with optional Windows desktop audio.
+- **OCR and smart previews** — copy text from images on Windows and get readable previews for code, JSON, links, and colors.
+- **History controls** — pin important items, edit text, pause monitoring, ignore selected apps, or clear old unpinned history automatically.
+- **Made to live in the tray** — configurable global shortcuts, launch at login, signed updates, and custom themes without a window in your way.
 
-## Run locally
+<p align="center">
+  <img src="docs/snip.png" alt="Selecting a region with SnipClip" width="48%" />
+  <img src="docs/settings.png" alt="SnipClip settings and global shortcuts" width="48%" />
+</p>
 
-**Needs**
+## Run it locally
 
-- [Node.js](https://nodejs.org/) 20+ (npm)
-- [Rust](https://rustup.rs/) (stable) + [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS
-- **Windows** is the primary target (OCR + richest clipboard owner detection). Linux and macOS builds work for the core vault/snip flow.
+You will need:
+
+- [Node.js 20+](https://nodejs.org/)
+- Stable [Rust](https://rustup.rs/)
+- The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system
+- On Wayland: `grim`, `slurp`, and `wl-clipboard`
 
 ```bash
-# Install deps
+git clone https://github.com/Ander507/SnipClip.git && cd SnipClip
 npm install
-
-# Dev (Vite + Tauri)
 npm run tauri dev
-
-# Production packages
-npm run tauri build
 ```
 
-No `.env` required for the default local vault. Data lives under the app data directory (`snipclip.db`).
+Use `npm run tauri build` to create a production package. No environment variables or external database are required. FFmpeg is resolved automatically for recording, and SnipClip stores its vault in the operating system's app-data directory.
 
-### Vault keyboard shortcuts
-
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` or `j` / `k` | Navigate |
-| `Enter` | Copy selected |
-| `p` | Toggle pin |
-| `Delete` / `Backspace` | Remove item |
-| `/` | Focus search |
-| `Esc` | Clear search / leave snip |
+Windows is the primary target and has the complete feature set, including desktop-audio recording and OCR. Linux supports the core vault and capture flow, with the tools above required on Wayland. Prebuilt macOS packages are not currently published, but the app can be built from source.
 
 ## How it works
 
-SnipClip is a **Tauri 2** shell: React + Tailwind UI, Rust for clipboard monitoring (`arboard`), screen capture (`xcap`), SQLite (`rusqlite`), and global hotkeys.
+SnipClip uses Tauri 2 to keep the interface small while moving the system-facing work into Rust. Clipboard history is persisted locally with SQLite, and long histories stay responsive because the React list is virtualized and only loads full images when they are opened.
 
-The snipper is a **second, preloaded transparent window** kept warm at startup. On hotkey it shows instantly over the desktop; after you drag a region it hides, captures that rect, then hands the crop to the annotation editor in the main window. That avoids baking the overlay UI into the screenshot.
+Screenshots use a preloaded transparent overlay, so invoking a snip does not have to boot a new window. The overlay disappears before the desktop is captured, which keeps SnipClip itself out of the image. Annotations are rendered in image-pixel space on an HTML canvas, so zooming does not change the final result or weaken a blur.
 
-Annotations (including blur) run on an **HTML canvas in image-pixel space**, so zoom/pan don’t weaken redaction. The vault list is virtualized so long histories stay light — image rows keep thumbnails; full blobs load only for preview / re-edit.
-
-## Support
-
-If SnipClip saves you time, you can [buy me a white Monster](https://ko-fi.com/ander507) 🤍
+On Windows, recording captures only the selected rectangle into a reusable BGRA buffer instead of copying the whole monitor every frame. A fixed-rate FFmpeg pipeline keeps the video timeline in sync with real time, and optional desktop audio is captured through WASAPI before being muxed into the final MP4.
 
 ## Credits
 
-Built with [Tauri](https://tauri.app/), [React](https://react.dev/), [Tailwind CSS](https://tailwindcss.com/), [rusqlite](https://github.com/rusqlite/rusqlite), [arboard](https://github.com/1Password/arboard), [xcap](https://github.com/nashaofu/xcap), and [Lucide](https://lucide.dev/).
+SnipClip is built with [Tauri](https://tauri.app/), [React](https://react.dev/), [Tailwind CSS](https://tailwindcss.com/), [rusqlite](https://github.com/rusqlite/rusqlite), [arboard](https://github.com/1Password/arboard), [xcap](https://github.com/nashaofu/xcap), [FFmpeg](https://ffmpeg.org/), and [Lucide](https://lucide.dev/).
+
+If it saves you time, you can [buy me a white Monster](https://ko-fi.com/ander507).

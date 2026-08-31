@@ -155,6 +155,59 @@ html.snip-mode #sc-theme-bg {
   display: none !important;
 }
 
+/* Screenshot corner popup — transparent shell */
+html.popup-mode,
+html.popup-mode body,
+html.popup-mode #root,
+body.popup-mode,
+body.popup-mode #root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html.popup-mode #sc-theme-bg {
+  display: none !important;
+}
+
+/* Recorder bar — frameless floating controls */
+html.recorder-mode,
+html.recorder-mode body,
+html.recorder-mode #root,
+body.recorder-mode,
+body.recorder-mode #root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html.recorder-mode #sc-theme-bg {
+  display: none !important;
+}
+
+/* Command palette — fullscreen transparent shell; panel uses themed bg-raised + glass */
+html.palette-mode,
+html.palette-mode body,
+html.palette-mode #root,
+body.palette-mode,
+body.palette-mode #root {
+  background: transparent !important;
+  background-color: transparent !important;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+html.palette-mode #sc-theme-bg {
+  display: none !important;
+}
+
+html.palette-mode .command-palette-shell {
+  pointer-events: auto;
+}
+
+.screenshot-popup-shell {
+  pointer-events: auto;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
 }

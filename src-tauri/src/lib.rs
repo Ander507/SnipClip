@@ -1,11 +1,18 @@
 mod apps;
 mod clipboard;
+mod command_palette;
 mod commands;
 mod db;
 mod hotkeys;
 mod ocr;
+mod recorder_bar;
+mod recording;
+mod screen_capture;
+mod screenshot_popup;
 mod snip;
+mod system_audio;
 mod themes;
+mod wayland;
 
 use db::Database;
 use hotkeys::HotkeyState;
@@ -27,6 +34,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             commands::list_items,
+            commands::search_clipboard,
+            commands::palette_copy_item,
+            commands::hide_command_palette,
+            commands::show_command_palette,
             commands::get_item,
             commands::toggle_pin,
             commands::delete_item,
@@ -36,6 +47,7 @@ pub fn run() {
             commands::update_clipboard_item,
             commands::capture_screen,
             commands::capture_screen_region,
+            commands::capture_region_wayland,
             commands::save_snip,
             commands::copy_image,
             commands::save_snip_to_vault,
@@ -44,6 +56,7 @@ pub fn run() {
             commands::show_main_window,
             commands::hide_main_window,
             commands::begin_snip,
+            commands::delayed_snip,
             commands::hide_snipper,
             commands::close_snipper,
             commands::get_settings,
@@ -54,7 +67,18 @@ pub fn run() {
             commands::toggle_clipboard_paused,
             commands::get_running_apps,
             commands::copy_text_from_image,
+            commands::run_ocr,
+            commands::copy_text,
             commands::is_ocr_available,
+            commands::finalize_screenshot,
+            commands::close_screenshot_popup,
+            commands::start_region_recording,
+            commands::stop_region_recording,
+            commands::pause_region_recording,
+            commands::finalize_recording,
+            commands::show_recorder_bar,
+            commands::hide_recorder_bar,
+            commands::recorder_bar_ready,
             commands::list_theme_packs,
             commands::save_theme_pack,
             commands::delete_theme_pack,
@@ -66,7 +90,8 @@ pub fn run() {
         ])
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
 
             #[cfg(desktop)]
             {
@@ -77,6 +102,8 @@ pub fn run() {
                     Some(vec!["--minimized".into()]),
                 ))?;
             }
+
+            recording::prewarm_encoder();
 
             let app_data = app
                 .path()
@@ -104,8 +131,12 @@ pub fn run() {
                 let _ = snipper.set_always_on_top(true);
             }
 
+            if let Some(popup) = app.get_webview_window("screenshot_popup") {
+                let _ = popup.hide();
+            }
             // Autostart / --minimized: sit in tray only (hotkeys still work)
-            let start_minimized = std::env::args().any(|a| a == "--minimized" || a == "--autostart");
+            let start_minimized =
+                std::env::args().any(|a| a == "--minimized" || a == "--autostart");
             if start_minimized {
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.hide();
@@ -137,7 +168,7 @@ pub fn run() {
                         let _ = commands::show_main_window(app.clone());
                     }
                     "snip" => {
-                        let _ = commands::begin_snip(app.clone());
+                        let _ = commands::begin_snip(app.clone(), None);
                     }
                     "quit" => {
                         clipboard::stop_monitor();
@@ -160,26 +191,27 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            match event {
-                tauri::WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close();
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
+                if window.label() == "main" {
+                    clipboard::set_main_ui_visible(false);
+                }
+                if window.label() == "screenshot_popup" {
                     let _ = window.hide();
-                    if window.label() == "main" {
-                        clipboard::set_main_ui_visible(false);
-                    }
                 }
-                tauri::WindowEvent::Focused(_)
-                | tauri::WindowEvent::Resized(_)
-                | tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                    if window.label() == "main" {
-                        let visible = window.is_visible().unwrap_or(false)
-                            && !window.is_minimized().unwrap_or(false);
-                        clipboard::set_main_ui_visible(visible);
-                    }
-                }
-                _ => {}
             }
+            tauri::WindowEvent::Focused(_)
+            | tauri::WindowEvent::Resized(_)
+            | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                if window.label() == "main" {
+                    let visible = window.is_visible().unwrap_or(false)
+                        && !window.is_minimized().unwrap_or(false);
+                    clipboard::set_main_ui_visible(visible);
+                }
+            }
+            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -91,14 +91,8 @@ pub fn capture_primary_monitor() -> Result<CaptureResult, String> {
     })
 }
 
-/// Capture a screen region using physical pixel coordinates (absolute desktop space).
-/// Supports selections that span multiple monitors by stitching monitor captures.
-pub fn capture_screen_region(
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-) -> Result<CaptureResult, String> {
+/// Capture a screen region as raw RGBA pixels (physical desktop coordinates).
+pub fn capture_region_rgba(x: i32, y: i32, width: u32, height: u32) -> Result<RgbaImage, String> {
     if width < 2 || height < 2 {
         return Err("selection too small".into());
     }
@@ -112,7 +106,6 @@ pub fn capture_screen_region(
     let sel_b = y.saturating_add(height as i32);
 
     let mut canvas: RgbaImage = ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 255]));
-    let mut names: Vec<String> = Vec::new();
     let mut pasted = false;
 
     for monitor in &monitors {
@@ -145,15 +138,11 @@ pub fn capture_screen_region(
         let dest_x = (ix1 - x).max(0) as i64;
         let dest_y = (iy1 - y).max(0) as i64;
         imageops::overlay(&mut canvas, &cropped, dest_x, dest_y);
-
-        names.push(monitor.name().to_string());
         pasted = true;
     }
 
     if !pasted {
-        // Fallback: single-monitor crop from first display (legacy path)
         let monitor = &monitors[0];
-        let name = monitor.name().to_string();
         let mx = monitor.x();
         let my = monitor.y();
         let img = monitor.capture_image().map_err(|e| e.to_string())?;
@@ -163,23 +152,28 @@ pub fn capture_screen_region(
         let max_h = img.height().saturating_sub(local_y);
         let w = width.min(max_w).max(1);
         let h = height.min(max_h).max(1);
-        let cropped = imageops::crop_imm(&img, local_x, local_y, w, h).to_image();
-        let data_url = encode_rgba(&cropped)?;
-        return Ok(CaptureResult {
-            data_url,
-            width: cropped.width(),
-            height: cropped.height(),
-            monitor_name: name,
-        });
+        return Ok(imageops::crop_imm(&img, local_x, local_y, w, h).to_image());
     }
 
-    let data_url = encode_rgba(&canvas)?;
-    let monitor_name = if names.len() == 1 {
-        names[0].clone()
-    } else {
-        format!("{} monitors", names.len())
-    };
+    Ok(canvas)
+}
 
+/// Capture a screen region using physical pixel coordinates (absolute desktop space).
+/// Supports selections that span multiple monitors by stitching monitor captures.
+pub fn capture_screen_region(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<CaptureResult, String> {
+    let canvas = capture_region_rgba(x, y, width, height)?;
+    let monitors = Monitor::all().map_err(|e| e.to_string())?;
+    let monitor_name = if monitors.len() == 1 {
+        monitors[0].name().to_string()
+    } else {
+        "multi".to_string()
+    };
+    let data_url = encode_rgba(&canvas)?;
     Ok(CaptureResult {
         data_url,
         width: canvas.width(),
@@ -195,4 +189,22 @@ pub fn save_png_data_url(data_url: &str, path: &str) -> Result<(), String> {
         .ok_or_else(|| "invalid data url".to_string())?;
     let bytes = B64.decode(b64).map_err(|e| e.to_string())?;
     std::fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
+/// Build a `CaptureResult` from raw PNG bytes (grim stdout on Wayland).
+pub fn capture_result_from_png_bytes(
+    png_bytes: &[u8],
+    monitor_name: &str,
+) -> Result<CaptureResult, String> {
+    let img = image::load_from_memory(png_bytes).map_err(|e| e.to_string())?;
+    let rgba = img.to_rgba8();
+    let width = rgba.width();
+    let height = rgba.height();
+    let data_url = encode_rgba(&rgba)?;
+    Ok(CaptureResult {
+        data_url,
+        width,
+        height,
+        monitor_name: monitor_name.to_string(),
+    })
 }

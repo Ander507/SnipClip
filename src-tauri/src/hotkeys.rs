@@ -8,6 +8,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 pub struct HotkeyState {
     pub clipboard: Mutex<String>,
     pub snip: Mutex<String>,
+    pub record: Mutex<String>,
+    pub snip_delay_enabled: Mutex<bool>,
+    pub snip_delay_ms: Mutex<u32>,
 }
 
 impl HotkeyState {
@@ -15,6 +18,9 @@ impl HotkeyState {
         Self {
             clipboard: Mutex::new(settings.hotkey_clipboard.clone()),
             snip: Mutex::new(settings.hotkey_snip.clone()),
+            record: Mutex::new(settings.hotkey_record.clone()),
+            snip_delay_enabled: Mutex::new(settings.snip_delay_enabled),
+            snip_delay_ms: Mutex::new(settings.snip_delay_ms),
         }
     }
 }
@@ -61,18 +67,57 @@ pub fn normalize_accelerator(s: &str) -> String {
         .join("+")
 }
 
+// allowing custom obscure hotkeys so web apps don't intercept our printscreen presses
+pub fn is_intercepted_snip_hotkey(s: &str) -> bool {
+    let n = normalize_accelerator(s).to_ascii_lowercase();
+    n.contains("printscreen")
+        || n.contains("print screen")
+        || n.contains("snapshot")
+        || n.contains("prtsc")
+        || n == "f13"
+}
+
+pub fn validate_snip_hotkey(s: &str) -> Result<(), String> {
+    if is_intercepted_snip_hotkey(s) {
+        return Err(
+            "Print Screen is often detected by apps like Snapchat. Use an obscure combo such as Ctrl+Alt+Q or Shift+F12.".into(),
+        );
+    }
+    Ok(())
+}
+
 pub fn register_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
     let clip = parse_hotkey(&settings.hotkey_clipboard)?;
+    validate_snip_hotkey(&settings.hotkey_snip)?;
+    validate_snip_hotkey(&settings.hotkey_record)?;
     let snip = parse_hotkey(&settings.hotkey_snip)?;
+    let record = parse_hotkey(&settings.hotkey_record)?;
+    let palette = parse_hotkey(crate::command_palette::palette_hotkey_string())?;
 
-    if clip == snip {
-        return Err("Clipboard and Snip hotkeys must be different".into());
+    let keys = [&clip, &snip, &record, &palette];
+    for (i, a) in keys.iter().enumerate() {
+        for b in keys.iter().skip(i + 1) {
+            if a == b {
+                return Err(
+                    "Clipboard, Snip, Record, and Command Palette hotkeys must all be different"
+                        .into(),
+                );
+            }
+        }
     }
 
     app.global_shortcut()
         .register(clip)
         .map_err(|e| e.to_string())?;
     app.global_shortcut().register(snip).map_err(|e| {
+        let _ = app.global_shortcut().unregister_all();
+        e.to_string()
+    })?;
+    app.global_shortcut().register(record).map_err(|e| {
+        let _ = app.global_shortcut().unregister_all();
+        e.to_string()
+    })?;
+    app.global_shortcut().register(palette).map_err(|e| {
         let _ = app.global_shortcut().unregister_all();
         e.to_string()
     })?;
@@ -87,11 +132,23 @@ pub fn unregister_all(app: &AppHandle) -> Result<(), String> {
 
 pub fn apply_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
     let _ = parse_hotkey(&settings.hotkey_clipboard)?;
+    validate_snip_hotkey(&settings.hotkey_snip)?;
+    validate_snip_hotkey(&settings.hotkey_record)?;
     let _ = parse_hotkey(&settings.hotkey_snip)?;
-    if normalize_accelerator(&settings.hotkey_clipboard)
-        == normalize_accelerator(&settings.hotkey_snip)
-    {
-        return Err("Clipboard and Snip hotkeys must be different".into());
+    let _ = parse_hotkey(&settings.hotkey_record)?;
+
+    let clip = normalize_accelerator(&settings.hotkey_clipboard);
+    let snip = normalize_accelerator(&settings.hotkey_snip);
+    let record = normalize_accelerator(&settings.hotkey_record);
+    let palette_norm = normalize_accelerator(crate::command_palette::palette_hotkey_string());
+
+    let keys = [&clip, &snip, &record, &palette_norm];
+    for (i, a) in keys.iter().enumerate() {
+        for b in keys.iter().skip(i + 1) {
+            if a == b {
+                return Err("Hotkeys must be unique (including Alt+C command palette)".into());
+            }
+        }
     }
 
     let _ = unregister_all(app);
@@ -100,6 +157,9 @@ pub fn apply_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), Stri
     if let Some(state) = app.try_state::<Arc<HotkeyState>>() {
         *state.clipboard.lock() = settings.hotkey_clipboard.clone();
         *state.snip.lock() = settings.hotkey_snip.clone();
+        *state.record.lock() = settings.hotkey_record.clone();
+        *state.snip_delay_enabled.lock() = settings.snip_delay_enabled;
+        *state.snip_delay_ms.lock() = settings.snip_delay_ms;
     }
     Ok(())
 }
@@ -112,13 +172,23 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
                     return;
                 }
 
-                let (clip_str, snip_str) =
+                let (clip_str, snip_str, record_str, snip_delay_enabled, snip_delay_ms) =
                     if let Some(state) = app.try_state::<Arc<HotkeyState>>() {
-                        (state.clipboard.lock().clone(), state.snip.lock().clone())
-                    } else {
                         (
-                            AppSettings::default().hotkey_clipboard,
-                            AppSettings::default().hotkey_snip,
+                            state.clipboard.lock().clone(),
+                            state.snip.lock().clone(),
+                            state.record.lock().clone(),
+                            *state.snip_delay_enabled.lock(),
+                            *state.snip_delay_ms.lock(),
+                        )
+                    } else {
+                        let defaults = AppSettings::default();
+                        (
+                            defaults.hotkey_clipboard,
+                            defaults.hotkey_snip,
+                            defaults.hotkey_record,
+                            defaults.snip_delay_enabled,
+                            defaults.snip_delay_ms,
                         )
                     };
 
@@ -128,12 +198,27 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
                 let Ok(snip) = parse_hotkey(&snip_str) else {
                     return;
                 };
+                let Ok(record) = parse_hotkey(&record_str) else {
+                    return;
+                };
+                let Ok(palette) = parse_hotkey(crate::command_palette::palette_hotkey_string())
+                else {
+                    return;
+                };
 
                 if *shortcut == clip {
                     let _ = crate::commands::toggle_main_window(app.clone());
                     let _ = app.emit("focus-search", ());
                 } else if *shortcut == snip {
-                    let _ = crate::commands::begin_snip(app.clone());
+                    if snip_delay_enabled && snip_delay_ms > 0 {
+                        let _ = crate::commands::delayed_snip(app.clone(), snip_delay_ms);
+                    } else {
+                        let _ = crate::commands::begin_snip(app.clone(), None);
+                    }
+                } else if *shortcut == record {
+                    let _ = crate::commands::begin_snip(app.clone(), Some("record".into()));
+                } else if *shortcut == palette {
+                    let _ = crate::command_palette::toggle_command_palette(app);
                 }
             })
             .build(),

@@ -18,9 +18,8 @@ import {
   Undo2,
   Redo2,
 } from "lucide-react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { AnnotateTool, CaptureResult } from "../lib/types";
-import { copyImage, saveSnip, saveSnipToVault, updateVaultImage } from "../lib/api";
+import { copyImage, copyText, saveSnip, saveSnipToVault, updateVaultImage } from "../lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 
 interface Props {
@@ -581,7 +580,7 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
     setDrawColor(sample.hex);
     setHoverColor(sample.hex);
     try {
-      await writeText(sample.hex);
+      await copyText(sample.hex);
       showToast(`${sample.hex} copied`);
     } catch {
       showToast(sample.hex);

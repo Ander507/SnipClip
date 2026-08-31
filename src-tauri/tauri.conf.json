@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SnipClip",
-  "version": "1.1.3",
+  "version": "1.2.0",
   "identifier": "com.ander507.snipclip",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -42,10 +42,63 @@
         "fullscreen": false,
         "focus": false,
         "backgroundColor": "#00000000"
+      },
+      {
+        "label": "screenshot_popup",
+        "title": "SnipClip Screenshot",
+        "url": "index.html?view=popup",
+        "width": 220,
+        "height": 140,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "focus": false,
+        "backgroundColor": "#00000000"
+      },
+      {
+        "label": "recorder_bar",
+        "title": "SnipClip Recorder",
+        "url": "index.html?view=recorder",
+        "width": 360,
+        "height": 52,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "focus": true,
+        "backgroundColor": "#00000000"
+      },
+      {
+        "label": "command_palette",
+        "title": "SnipClip Palette",
+        "url": "index.html?view=palette",
+        "width": 600,
+        "height": 400,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "center": true,
+        "focus": false,
+        "backgroundColor": "#00000000"
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$PICTURES/**", "$HOME/Pictures/**", "$RESOURCE/**"]
+      }
     }
   },
   "bundle": {
