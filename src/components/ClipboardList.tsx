@@ -14,6 +14,8 @@ const EDIT_LINE_HEIGHT = 22;
 interface Props {
   items: ClipboardItem[];
   selectedId: number | null;
+  hotkeySnip?: string;
+  hotkeyPalette?: string;
   ocrAvailable?: boolean;
   onSelect: (id: number) => void;
   onCopy: (id: number) => void;
@@ -21,6 +23,7 @@ interface Props {
   onPin: (id: number) => void;
   onDelete: (id: number) => void;
   onPreviewImage: (id: number) => void;
+  onEditVideo?: (id: number) => void;
   onOpenLink: (url: string) => void;
   onUpdate: (id: number, content: string) => void;
 }
@@ -28,6 +31,8 @@ interface Props {
 export function ClipboardList({
   items,
   selectedId,
+  hotkeySnip = "Ctrl+Shift+S",
+  hotkeyPalette = "Alt+C",
   ocrAvailable = false,
   onSelect,
   onCopy,
@@ -35,6 +40,7 @@ export function ClipboardList({
   onPin,
   onDelete,
   onPreviewImage,
+  onEditVideo,
   onOpenLink,
   onUpdate,
 }: Props) {
@@ -85,9 +91,12 @@ export function ClipboardList({
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted text-accent">
             <Copy size={18} />
           </div>
-          <p className="text-sm font-medium text-fg-secondary">No items yet</p>
-          <p className="mt-1.5 max-w-[240px] text-[12px] leading-relaxed text-fg-muted">
-            Copy text, links, or images — they'll appear here.
+          <p className="text-sm font-medium text-fg-secondary">Your vault is empty</p>
+          <p className="mt-1.5 max-w-[280px] text-[12px] leading-relaxed text-fg-muted">
+            Copy anything — text, links, or images — and it will show up here automatically.
+          </p>
+          <p className="mt-4 text-[11px] leading-relaxed text-fg-faint">
+            {hotkeyPalette} quick paste · {hotkeySnip} snip a region
           </p>
         </div>
       </div>
@@ -119,6 +128,7 @@ export function ClipboardList({
                 onPin={() => onPin(item.id)}
                 onDelete={() => onDelete(item.id)}
                 onPreviewImage={() => onPreviewImage(item.id)}
+                onEditVideo={onEditVideo ? () => onEditVideo(item.id) : undefined}
                 onOpenLink={onOpenLink}
                 onUpdate={onUpdate}
                 onEditLayout={(editing, lines) => handleEditLayout(item.id, editing, lines)}

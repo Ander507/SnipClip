@@ -39,7 +39,7 @@ fn encode_rgba(img: &image::RgbaImage) -> Result<String, String> {
     ))
 }
 
-/// Union of all monitor bounds in physical desktop coordinates.
+/// Union of all monitor bounds in physical desktop coordinates (xcap fallback).
 pub fn virtual_desktop_bounds() -> Result<VirtualDesktop, String> {
     let monitors = Monitor::all().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
@@ -70,6 +70,58 @@ pub fn virtual_desktop_bounds() -> Result<VirtualDesktop, String> {
     })
 }
 
+/// Virtual desktop from Tauri's display list (matches window positioning).
+pub fn virtual_desktop_from_tauri(app: &tauri::AppHandle) -> Result<VirtualDesktop, String> {
+    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+    if monitors.is_empty() {
+        return virtual_desktop_bounds();
+    }
+
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
+
+    for m in &monitors {
+        let pos = m.position();
+        let size = m.size();
+        min_x = min_x.min(pos.x);
+        min_y = min_y.min(pos.y);
+        max_x = max_x.max(pos.x.saturating_add(size.width as i32));
+        max_y = max_y.max(pos.y.saturating_add(size.height as i32));
+    }
+
+    Ok(VirtualDesktop {
+        x: min_x,
+        y: min_y,
+        width: (max_x - min_x).max(1) as u32,
+        height: (max_y - min_y).max(1) as u32,
+    })
+}
+
+/// Map overlay-local physical coords onto absolute desktop space.
+pub fn absolutize_region(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    origin_x: i32,
+    origin_y: i32,
+    relative: bool,
+) -> (i32, i32, u32, u32) {
+    if relative {
+        // offsetting relative coords with virtual desktop origin to handle negative display positions
+        (
+            x.saturating_add(origin_x),
+            y.saturating_add(origin_y),
+            width,
+            height,
+        )
+    } else {
+        (x, y, width, height)
+    }
+}
+
 pub fn capture_primary_monitor() -> Result<CaptureResult, String> {
     let monitors = Monitor::all().map_err(|e| e.to_string())?;
     let monitor = monitors
@@ -97,6 +149,20 @@ pub fn capture_region_rgba(x: i32, y: i32, width: u32, height: u32) -> Result<Rg
         return Err("selection too small".into());
     }
 
+    #[cfg(windows)]
+    {
+        if let Ok(mut capturer) = crate::screen_capture::RegionCapturer::new(x, y, width, height) {
+            let mut scratch = vec![0u8; capturer.frame_bytes()];
+            if let Ok(img) = capturer.capture_rgba(&mut scratch) {
+                return Ok(img);
+            }
+        }
+    }
+
+    capture_region_rgba_xcap(x, y, width, height)
+}
+
+fn capture_region_rgba_xcap(x: i32, y: i32, width: u32, height: u32) -> Result<RgbaImage, String> {
     let monitors = Monitor::all().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("no monitors found".into());
@@ -166,13 +232,29 @@ pub fn capture_screen_region(
     width: u32,
     height: u32,
 ) -> Result<CaptureResult, String> {
+    capture_screen_region_ex(x, y, width, height, None, false)
+}
+
+/// Like [`capture_screen_region`], optionally treating `(x, y)` as overlay-local.
+pub fn capture_screen_region_ex(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    origin: Option<(i32, i32)>,
+    relative: bool,
+) -> Result<CaptureResult, String> {
+    let (origin_x, origin_y) = origin.unwrap_or_else(|| {
+        virtual_desktop_bounds()
+            .map(|d| (d.x, d.y))
+            .unwrap_or((0, 0))
+    });
+    let (x, y, width, height) =
+        absolutize_region(x, y, width, height, origin_x, origin_y, relative);
+
     let canvas = capture_region_rgba(x, y, width, height)?;
     let monitors = Monitor::all().map_err(|e| e.to_string())?;
-    let monitor_name = if monitors.len() == 1 {
-        monitors[0].name().to_string()
-    } else {
-        "multi".to_string()
-    };
+    let monitor_name = monitor_name_for_selection(x, y, width, height, &monitors);
     let data_url = encode_rgba(&canvas)?;
     Ok(CaptureResult {
         data_url,
@@ -180,6 +262,34 @@ pub fn capture_screen_region(
         height: canvas.height(),
         monitor_name,
     })
+}
+
+fn monitor_name_for_selection(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    monitors: &[Monitor],
+) -> String {
+    if monitors.len() <= 1 {
+        return monitors
+            .first()
+            .map(|m| m.name().to_string())
+            .unwrap_or_else(|| "display".into());
+    }
+
+    let cx = x + (width as i32) / 2;
+    let cy = y + (height as i32) / 2;
+    for monitor in monitors {
+        let mx = monitor.x();
+        let my = monitor.y();
+        let mr = mx + monitor.width() as i32;
+        let mb = my + monitor.height() as i32;
+        if cx >= mx && cx < mr && cy >= my && cy < mb {
+            return monitor.name().to_string();
+        }
+    }
+    "multi".into()
 }
 
 pub fn save_png_data_url(data_url: &str, path: &str) -> Result<(), String> {

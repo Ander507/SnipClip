@@ -1,7 +1,7 @@
 use crate::db::Database;
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use image::{imageops, ImageBuffer, RgbaImage};
+use image::{imageops, ImageBuffer, Rgba};
 use parking_lot::Mutex;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -198,18 +198,9 @@ fn classify_text(text: &str) -> (&'static str, String) {
 fn image_to_png_b64(img: &ImageData<'_>) -> Result<(String, String), String> {
     let width = img.width as u32;
     let height = img.height as u32;
-    let mut rgba = RgbaImage::new(width, height);
-    for (i, pixel) in img.bytes.chunks(4).enumerate() {
-        if pixel.len() < 4 {
-            break;
-        }
-        let x = (i as u32) % width;
-        let y = (i as u32) / width;
-        if y >= height {
-            break;
-        }
-        rgba.put_pixel(x, y, image::Rgba([pixel[0], pixel[1], pixel[2], pixel[3]]));
-    }
+    let rgba: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_raw(width, height, img.bytes.to_vec())
+            .ok_or_else(|| "invalid clipboard image buffer".to_string())?;
 
     let mut full_buf = Cursor::new(Vec::new());
     rgba.write_to(&mut full_buf, image::ImageFormat::Png)
@@ -227,6 +218,105 @@ fn image_to_png_b64(img: &ImageData<'_>) -> Result<(String, String), String> {
     );
 
     Ok((full_b64, thumb_preview))
+}
+
+/// One clipboard open/read for both text and image payloads.
+fn read_clipboard_snapshot() -> Result<(Option<String>, Option<ImageData<'static>>), String> {
+    if crate::wayland::is_wayland() {
+        #[cfg(target_os = "linux")]
+        {
+            let text = read_clipboard_text().ok().filter(|t| !t.is_empty());
+            let image = read_clipboard_image().ok();
+            return Ok((text, image));
+        }
+    }
+
+    with_clipboard_retry(|c| {
+        let text = c.get_text().ok().filter(|t| !t.is_empty());
+        let image = c.get_image().ok().map(|img| ImageData {
+            width: img.width,
+            height: img.height,
+            bytes: std::borrow::Cow::Owned(img.bytes.into_owned()),
+        });
+        Ok((text, image))
+    })
+}
+
+fn process_clipboard_snapshot(
+    app: &AppHandle,
+    db: &Arc<Database>,
+    text: Option<String>,
+    image: Option<ImageData<'static>>,
+    last_text: &mut Option<String>,
+    last_image_hash: &mut Option<u64>,
+    skip_insert: bool,
+) {
+    if let Some(text) = text {
+        if Some(&text) != last_text.as_ref() {
+            *last_text = Some(text.clone());
+            if !skip_insert {
+                let (ctype, preview) = classify_text(&text);
+                if let Ok(item) = db.insert(ctype, &text, &preview) {
+                    let _ = app.emit("clipboard-item", &item.for_event());
+                }
+            }
+        }
+    }
+
+    if let Some(img) = image {
+        let hash = image_content_hash(&img);
+        if Some(hash) != *last_image_hash {
+            *last_image_hash = Some(hash);
+            if !skip_insert {
+                if let Ok((b64, thumb)) = image_to_png_b64(&img) {
+                    let content = format!("data:image/png;base64,{b64}");
+                    if let Ok(item) = db.insert("image", &content, &thumb) {
+                        let _ = app.emit("clipboard-item", &item.for_event());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+mod clipboard_seq {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static LAST_SEQ: AtomicU32 = AtomicU32::new(0);
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetClipboardSequenceNumber() -> u32;
+    }
+
+    fn current() -> u32 {
+        unsafe { GetClipboardSequenceNumber() }
+    }
+
+    /// Returns true when the OS clipboard changed since the last acknowledged read.
+    pub fn changed() -> bool {
+        let now = current();
+        let prev = LAST_SEQ.load(Ordering::Relaxed);
+        if now == prev {
+            return false;
+        }
+        LAST_SEQ.store(now, Ordering::Relaxed);
+        true
+    }
+
+    pub fn acknowledge_current() {
+        LAST_SEQ.store(current(), Ordering::Relaxed);
+    }
+}
+
+#[cfg(not(windows))]
+mod clipboard_seq {
+    pub fn changed() -> bool {
+        true
+    }
+
+    pub fn acknowledge_current() {}
 }
 
 pub fn start_monitor(app: AppHandle) {
@@ -251,10 +341,15 @@ pub fn start_monitor(app: AppHandle) {
 
             if RESYNC_SEEN.swap(false, Ordering::SeqCst) {
                 // Align with OS clipboard without writing into the vault again.
-                last_text = read_clipboard_text().ok().filter(|t| !t.is_empty());
-                last_image_hash = read_clipboard_image()
-                    .ok()
-                    .map(|img| image_content_hash(&img));
+                if let Ok((text, image)) = read_clipboard_snapshot() {
+                    if let Some(text) = text {
+                        last_text = Some(text);
+                    }
+                    if let Some(img) = image {
+                        last_image_hash = Some(image_content_hash(&img));
+                    }
+                }
+                clipboard_seq::acknowledge_current();
             }
 
             if is_suppressed() {
@@ -270,51 +365,26 @@ pub fn start_monitor(app: AppHandle) {
                 }
             };
 
-            if is_paused() {
-                // Track clipboard state while paused so unpausing doesn't re-insert stale content.
-                if let Ok(text) = read_clipboard_text() {
-                    if !text.is_empty() && Some(&text) != last_text.as_ref() {
-                        last_text = Some(text);
-                    }
-                }
-                if let Ok(img) = read_clipboard_image() {
-                    let hash = image_content_hash(&img);
-                    if Some(hash) != last_image_hash {
-                        last_image_hash = Some(hash);
-                    }
-                }
+            if !clipboard_seq::changed() {
                 thread::sleep(Duration::from_millis(poll_interval_ms()));
                 continue;
             }
 
+            let Ok((text, image)) = read_clipboard_snapshot() else {
+                thread::sleep(Duration::from_millis(poll_interval_ms()));
+                continue;
+            };
+
             let skip_insert = should_skip_insert();
-
-            if let Ok(text) = read_clipboard_text() {
-                if !text.is_empty() && Some(&text) != last_text.as_ref() {
-                    last_text = Some(text.clone());
-                    if !skip_insert {
-                        let (ctype, preview) = classify_text(&text);
-                        if let Ok(item) = db.insert(ctype, &text, &preview) {
-                            let _ = app.emit("clipboard-item", &item.for_event());
-                        }
-                    }
-                }
-            }
-
-            if let Ok(img) = read_clipboard_image() {
-                let hash = image_content_hash(&img);
-                if Some(hash) != last_image_hash {
-                    last_image_hash = Some(hash);
-                    if !skip_insert {
-                        if let Ok((b64, thumb)) = image_to_png_b64(&img) {
-                            let content = format!("data:image/png;base64,{b64}");
-                            if let Ok(item) = db.insert("image", &content, &thumb) {
-                                let _ = app.emit("clipboard-item", &item.for_event());
-                            }
-                        }
-                    }
-                }
-            }
+            process_clipboard_snapshot(
+                &app,
+                &db,
+                text,
+                image,
+                &mut last_text,
+                &mut last_image_hash,
+                skip_insert || is_paused(),
+            );
 
             thread::sleep(Duration::from_millis(poll_interval_ms()));
         }
@@ -335,6 +405,140 @@ pub fn write_text_to_clipboard(text: &str) -> Result<(), String> {
     }
     let owned = text.to_string();
     with_clipboard_retry(move |c| c.set_text(owned.clone()))
+}
+
+/// Put real file objects on the clipboard (CF_HDROP on Windows) so Discord/Explorer paste the file.
+pub fn write_files_to_clipboard(paths: &[std::path::PathBuf]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("no files to copy".into());
+    }
+    for path in paths {
+        if !path.is_file() {
+            return Err(format!("file not found: {}", path.display()));
+        }
+    }
+
+    suppress_monitor(1200);
+
+    #[cfg(windows)]
+    {
+        return write_hdrop_files(paths);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let joined = paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        write_text_to_clipboard(&joined)
+    }
+}
+
+#[cfg(windows)]
+fn write_hdrop_files(paths: &[std::path::PathBuf]) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::{HANDLE, HWND};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT};
+    use windows::Win32::UI::Shell::DROPFILES;
+
+    let mut file_blob: Vec<u16> = Vec::new();
+    for path in paths {
+        let absolute = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf());
+        // canonicalize on Windows prefixes \\?\ — strip for apps that dislike it
+        let display = absolute.to_string_lossy();
+        let cleaned = display
+            .strip_prefix(r"\\?\")
+            .unwrap_or(display.as_ref())
+            .to_string();
+        file_blob.extend(std::ffi::OsString::from(cleaned).encode_wide());
+        file_blob.push(0);
+    }
+    file_blob.push(0); // double-null terminator
+
+    let dropfiles_size = std::mem::size_of::<DROPFILES>();
+    let total = dropfiles_size + file_blob.len() * 2;
+
+    // building a DROPFILES + wide path list so CF_HDROP paste attaches the real media file
+    unsafe {
+        let hdrop = GlobalAlloc(GMEM_MOVEABLE, total)
+            .map_err(|e| format!("GlobalAlloc CF_HDROP failed: {e}"))?;
+        if hdrop.0.is_null() {
+            return Err("GlobalAlloc returned null for CF_HDROP".into());
+        }
+        let ptr = GlobalLock(hdrop) as *mut u8;
+        if ptr.is_null() {
+            return Err("GlobalLock failed for CF_HDROP".into());
+        }
+
+        let header = DROPFILES {
+            pFiles: dropfiles_size as u32,
+            pt: windows::Win32::Foundation::POINT { x: 0, y: 0 },
+            fNC: windows::Win32::Foundation::FALSE,
+            fWide: windows::Win32::Foundation::TRUE,
+        };
+        std::ptr::write(ptr as *mut DROPFILES, header);
+        std::ptr::copy_nonoverlapping(
+            file_blob.as_ptr() as *const u8,
+            ptr.add(dropfiles_size),
+            file_blob.len() * 2,
+        );
+        let _ = GlobalUnlock(hdrop);
+
+        // Also offer Unicode text path for editors that only accept text
+        let text = paths[0]
+            .canonicalize()
+            .unwrap_or_else(|_| paths[0].to_path_buf());
+        let text_s = text.to_string_lossy();
+        let text_clean = text_s
+            .strip_prefix(r"\\?\")
+            .unwrap_or(text_s.as_ref());
+        let text_wide: Vec<u16> = std::ffi::OsString::from(text_clean)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let text_bytes = text_wide.len() * 2;
+        let htext = GlobalAlloc(GMEM_MOVEABLE, text_bytes)
+            .map_err(|e| format!("GlobalAlloc CF_UNICODETEXT failed: {e}"))?;
+        let tptr = GlobalLock(htext) as *mut u16;
+        if tptr.is_null() {
+            return Err("GlobalLock failed for CF_UNICODETEXT".into());
+        }
+        std::ptr::copy_nonoverlapping(text_wide.as_ptr(), tptr, text_wide.len());
+        let _ = GlobalUnlock(htext);
+
+        let _guard = clipboard_lock().lock();
+        let mut last_err = String::new();
+        for _ in 0..RETRIES {
+            match OpenClipboard(Some(HWND::default())) {
+                Ok(()) => {
+                    let _ = EmptyClipboard();
+                    if SetClipboardData(CF_HDROP.0 as u32, Some(HANDLE(hdrop.0))).is_err() {
+                        let _ = CloseClipboard();
+                        last_err = "SetClipboardData(CF_HDROP) failed".into();
+                        thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+                        continue;
+                    }
+                    // Ownership of hdrop transferred to the clipboard on success
+                    let _ = SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(htext.0)));
+                    let _ = CloseClipboard();
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+                }
+            }
+        }
+        Err(format!("OpenClipboard failed after retries: {last_err}"))
+    }
 }
 
 pub fn write_image_to_clipboard(data_url: &str) -> Result<(), String> {
@@ -367,6 +571,7 @@ pub fn write_image_to_clipboard(data_url: &str) -> Result<(), String> {
     })
 }
 
+#[cfg(target_os = "linux")]
 fn read_clipboard_text() -> Result<String, String> {
     if crate::wayland::is_wayland() {
         #[cfg(target_os = "linux")]
@@ -377,6 +582,7 @@ fn read_clipboard_text() -> Result<String, String> {
     with_clipboard_retry(|c| c.get_text())
 }
 
+#[cfg(target_os = "linux")]
 fn read_clipboard_image() -> Result<ImageData<'static>, String> {
     if crate::wayland::is_wayland() {
         #[cfg(target_os = "linux")]

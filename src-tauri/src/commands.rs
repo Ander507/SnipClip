@@ -95,6 +95,10 @@ fn copy_item_to_clipboard(item: &ClipboardItem) -> Result<(), String> {
             }
             clipboard::write_image_to_clipboard(&item.content)
         }
+        "video" | "gif" => {
+            let path = std::path::PathBuf::from(&item.content);
+            clipboard::write_files_to_clipboard(&[path])
+        }
         _ => clipboard::write_text_to_clipboard(&item.content),
     }
 }
@@ -146,10 +150,7 @@ pub fn capture_screen() -> Result<CaptureResult, String> {
 
 /// Hide overlay windows and wait for DWM to drop them from the desktop buffer.
 fn prepare_desktop_capture(app: &AppHandle) {
-    if let Some(snipper) = app.get_webview_window("snipper") {
-        let _ = snipper.hide();
-        screenshot_popup::park_snipper_window(&snipper);
-    }
+    screenshot_popup::park_all_snipper_windows(app);
     // hiding the tauri overlay and sleeping 150ms so windows DWM clears it from the gpu buffer before we capture
     std::thread::sleep(std::time::Duration::from_millis(150));
 }
@@ -163,7 +164,69 @@ pub fn capture_screen_region(
     height: u32,
 ) -> Result<CaptureResult, String> {
     prepare_desktop_capture(&app);
-    snip::capture_screen_region(x, y, width, height)
+    let desktop = snip::virtual_desktop_from_tauri(&app).ok();
+    let origin = desktop.as_ref().map(|d| (d.x, d.y));
+    // Frontend sends absolute physical coords; keep relative=false. Origin retained for future overlay-local callers.
+    snip::capture_screen_region_ex(x, y, width, height, origin, false)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionOcrResult {
+    pub text: String,
+    pub line_count: usize,
+}
+
+/// Capture a region, run Windows Media OCR (via win_ocr), copy text, close overlays.
+#[tauri::command]
+pub async fn capture_region_ocr(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<RegionOcrResult, String> {
+    let capture = {
+        let app2 = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            prepare_desktop_capture(&app2);
+            let desktop = snip::virtual_desktop_from_tauri(&app2).ok();
+            let origin = desktop.as_ref().map(|d| (d.x, d.y));
+            snip::capture_screen_region_ex(x, y, width, height, origin, false)
+        })
+        .await
+        .map_err(|e| e.to_string())??
+    };
+
+    let data_url = capture.data_url.clone();
+    let text = tauri::async_runtime::spawn_blocking(move || {
+        let bytes = decode_image_data_url(&data_url)?;
+        crate::ocr::ocr_png_bytes(&bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() {
+        let _ = end_snip_session(&app, false);
+        return Err("No text found in selection".into());
+    }
+
+    clipboard::write_text_to_clipboard(&trimmed)?;
+    let line_count = trimmed.lines().filter(|l| !l.trim().is_empty()).count();
+    let _ = app.emit(
+        "ocr-extracted",
+        serde_json::json!({
+            "lineCount": line_count,
+            "preview": trimmed.chars().take(80).collect::<String>(),
+        }),
+    );
+    let _ = end_snip_session(&app, false);
+
+    Ok(RegionOcrResult {
+        text: trimmed,
+        line_count,
+    })
 }
 
 #[derive(serde::Serialize)]
@@ -311,9 +374,7 @@ pub fn hide_main_window(app: AppHandle) -> Result<(), String> {
 
 /// Tear down the fullscreen snipper so it cannot block the desktop.
 pub fn end_snip_session(app: &AppHandle, restore_main: bool) -> Result<(), String> {
-    if let Some(snipper) = app.get_webview_window("snipper") {
-        screenshot_popup::park_snipper_window(&snipper);
-    }
+    screenshot_popup::park_all_snipper_windows(app);
     if restore_main {
         show_main_window(app.clone())?;
     } else {
@@ -362,6 +423,36 @@ pub fn delayed_snip(app: AppHandle, delay_ms: u32) -> Result<(), String> {
     Ok(())
 }
 
+fn snipper_label(index: usize) -> String {
+    if index == 0 {
+        "snipper".into()
+    } else {
+        format!("snipper-{index}")
+    }
+}
+
+fn ensure_snipper_window(app: &AppHandle, label: &str) -> Result<tauri::WebviewWindow, String> {
+    if let Some(win) = app.get_webview_window(label) {
+        return Ok(win);
+    }
+
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html?mode=snip".into()))
+        .title("SnipClip Snipper")
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .resizable(false)
+        .focused(false)
+        .inner_size(800.0, 600.0)
+        .build()
+        .map_err(|e| e.to_string())
+}
+
 fn show_snipper_overlay(app: &AppHandle, mode: &str) -> Result<(), String> {
     use tauri::{Emitter, Position, Size};
     use tauri::{PhysicalPosition, PhysicalSize};
@@ -372,35 +463,64 @@ fn show_snipper_overlay(app: &AppHandle, mode: &str) -> Result<(), String> {
     }
     sync_main_ui_visible(app);
 
-    let snipper = match app.get_webview_window("snipper") {
-        Some(w) => w,
-        None => {
-            let _ = show_main_window(app.clone());
-            return Err("snipper window missing".into());
-        }
-    };
+    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+    if monitors.is_empty() {
+        let _ = show_main_window(app.clone());
+        return Err("no monitors found".into());
+    }
 
-    let desktop = match snip::virtual_desktop_bounds() {
-        Ok(d) => d,
-        Err(e) => {
-            let _ = show_main_window(app.clone());
-            return Err(e);
-        }
-    };
+    let desktop = snip::virtual_desktop_from_tauri(app).unwrap_or(snip::VirtualDesktop {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+    });
 
-    let _ = snipper.set_focusable(true);
-    let _ = snipper.set_fullscreen(false);
-    let _ = snipper.set_always_on_top(true);
-    let _ = snipper.set_position(Position::Physical(PhysicalPosition::new(
-        desktop.x, desktop.y,
-    )));
-    let _ = snipper.set_size(Size::Physical(PhysicalSize::new(
-        desktop.width,
-        desktop.height,
-    )));
-    let _ = snipper.show();
-    let _ = snipper.set_focus();
-    let _ = snipper.emit("snip-ready", serde_json::json!({ "mode": mode }));
+    // spanning the overlay across all active monitor bounds so secondary displays can snip
+    let mut focused = false;
+    for (index, monitor) in monitors.iter().enumerate() {
+        let label = snipper_label(index);
+        let snipper = match ensure_snipper_window(app, &label) {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = show_main_window(app.clone());
+                return Err(e);
+            }
+        };
+
+        let pos = monitor.position();
+        let size = monitor.size();
+        let show_controls = index == 0;
+
+        let _ = snipper.set_focusable(true);
+        let _ = snipper.set_fullscreen(false);
+        let _ = snipper.set_always_on_top(true);
+        let _ = snipper.set_position(Position::Physical(PhysicalPosition::new(pos.x, pos.y)));
+        let _ = snipper.set_size(Size::Physical(PhysicalSize::new(size.width, size.height)));
+        let _ = snipper.show();
+        if !focused {
+            let _ = snipper.set_focus();
+            focused = true;
+        }
+        let payload = serde_json::json!({
+            "mode": mode,
+            "showControls": show_controls,
+            "originX": pos.x,
+            "originY": pos.y,
+            "desktopOriginX": desktop.x,
+            "desktopOriginY": desktop.y,
+        });
+        let _ = snipper.emit("snip-ready", payload.clone());
+        // New secondary webviews may miss the first emit while still loading
+        if index > 0 {
+            let win = snipper.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+                let _ = win.emit("snip-ready", payload);
+            });
+        }
+    }
+
     screenshot_popup::mark_snip_overlay_open();
     Ok(())
 }
@@ -408,9 +528,7 @@ fn show_snipper_overlay(app: &AppHandle, mode: &str) -> Result<(), String> {
 /// Hide snipper during capture (keeps it off-screen afterward).
 #[tauri::command]
 pub fn hide_snipper(app: AppHandle) -> Result<(), String> {
-    if let Some(snipper) = app.get_webview_window("snipper") {
-        screenshot_popup::park_snipper_window(&snipper);
-    }
+    screenshot_popup::park_all_snipper_windows(&app);
     Ok(())
 }
 
@@ -520,13 +638,20 @@ pub fn get_running_apps() -> Vec<String> {
 
 /// OCR text from a vault image and copy it to the system clipboard.
 #[tauri::command]
-pub fn copy_text_from_image(db: State<'_, Arc<Database>>, id: i64) -> Result<String, String> {
+pub async fn copy_text_from_image(
+    db: State<'_, Arc<Database>>,
+    id: i64,
+) -> Result<String, String> {
     let item = db.get(id)?.ok_or_else(|| "item not found".to_string())?;
     if item.content_type != "image" && item.content_type != "screenshot" {
         return Err("item is not an image".into());
     }
     let bytes = decode_image_data_url(&item.content)?;
-    let text = crate::ocr::ocr_png_bytes(&bytes)?.trim().to_string();
+    let text = tauri::async_runtime::spawn_blocking(move || crate::ocr::ocr_png_bytes(&bytes))
+        .await
+        .map_err(|e| e.to_string())??
+        .trim()
+        .to_string();
     if text.is_empty() {
         return Err("No text found in image".into());
     }
@@ -535,9 +660,11 @@ pub fn copy_text_from_image(db: State<'_, Arc<Database>>, id: i64) -> Result<Str
 }
 
 #[tauri::command]
-pub fn run_ocr(data_url: String) -> Result<String, String> {
+pub async fn run_ocr(data_url: String) -> Result<String, String> {
     let bytes = decode_image_data_url(&data_url)?;
-    crate::ocr::ocr_png_bytes(&bytes)
+    tauri::async_runtime::spawn_blocking(move || crate::ocr::ocr_png_bytes(&bytes))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -664,22 +791,98 @@ pub fn finalize_recording(
     width: u32,
     height: u32,
 ) -> Result<FinalizeRecordingResult, String> {
-    let content_type = if format.eq_ignore_ascii_case("mp4") {
-        "video"
-    } else {
+    let _ = db;
+    let _ = format;
+    // Open the in-app editor instead of auto-saving the raw capture
+    crate::video_editor_window::show_video_editor(
+        &app,
+        crate::video_edit::VideoEditorPayload {
+            file_path: file_path.clone(),
+            width,
+            height,
+            vault_id: None,
+            is_draft: true,
+        },
+    )?;
+    let _ = hide_main_window(app);
+
+    Ok(FinalizeRecordingResult {
+        vault_id: 0,
+        file_path,
+        width,
+        height,
+        item: ClipboardItem {
+            id: 0,
+            content_type: "video".into(),
+            content: String::new(),
+            preview: String::new(),
+            is_pinned: false,
+            created_at: String::new(),
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn process_video_clip(
+    input_path: String,
+    output_format: String,
+    start_sec: f32,
+    end_sec: f32,
+    crop: Option<crate::video_edit::CropParams>,
+    mute_audio: bool,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::video_edit::process_video_clip(
+            &input_path,
+            &output_format,
+            start_sec,
+            end_sec,
+            crop.as_ref(),
+            mute_audio,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn save_processed_recording(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    file_path: String,
+    output_format: String,
+    width: u32,
+    height: u32,
+    vault_id: Option<i64>,
+    discard_input: Option<String>,
+) -> Result<FinalizeRecordingResult, String> {
+    let content_type = if output_format.eq_ignore_ascii_case("gif") {
         "gif"
+    } else {
+        "video"
     };
     let file_name = std::path::Path::new(&file_path)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("recording");
     let preview = format!("{content_type}: {file_name}");
-    // writing final mp4/gif recording metadata to sqlite and copying file path to clipboard
-    let item = db
-        .insert(content_type, &file_path, &preview)
-        .map(|item| item.for_event())?;
 
-    clipboard::write_text_to_clipboard(&file_path)?;
+    let item = if let Some(id) = vault_id.filter(|id| *id > 0) {
+        db.update_media_content(id, content_type, &file_path, &preview)
+            .map(|item| item.for_event())?
+    } else {
+        db.insert(content_type, &file_path, &preview)
+            .map(|item| item.for_event())?
+    };
+
+    // CF_HDROP so Discord / Explorer / Slack paste the real .mp4/.gif file, not a path string
+    clipboard::write_files_to_clipboard(&[std::path::PathBuf::from(&file_path)])?;
+
+    if let Some(raw) = discard_input {
+        if raw != file_path {
+            let _ = crate::video_edit::delete_recording_file(&raw);
+        }
+    }
 
     let payload = ScreenshotPopupPayload {
         vault_id: item.id,
@@ -694,7 +897,7 @@ pub fn finalize_recording(
     }
 
     let _ = app.emit("clipboard-item", &item);
-    let _ = hide_main_window(app.clone());
+    let _ = crate::video_editor_window::hide_video_editor(&app);
 
     Ok(FinalizeRecordingResult {
         vault_id: item.id,
@@ -703,6 +906,50 @@ pub fn finalize_recording(
         height,
         item,
     })
+}
+
+#[tauri::command]
+pub fn discard_recording(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    file_path: String,
+    vault_id: Option<i64>,
+) -> Result<(), String> {
+    let _ = crate::video_edit::delete_recording_file(&file_path);
+    if let Some(id) = vault_id.filter(|id| *id > 0) {
+        let _ = db.delete(id);
+    }
+    crate::video_editor_window::hide_video_editor(&app)
+}
+
+#[tauri::command]
+pub fn open_video_editor(
+    app: AppHandle,
+    file_path: String,
+    width: Option<u32>,
+    height: Option<u32>,
+    vault_id: Option<i64>,
+) -> Result<(), String> {
+    crate::video_editor_window::show_video_editor(
+        &app,
+        crate::video_edit::VideoEditorPayload {
+            file_path,
+            width: width.unwrap_or(1280),
+            height: height.unwrap_or(720),
+            vault_id,
+            is_draft: vault_id.is_none(),
+        },
+    )
+}
+
+#[tauri::command]
+pub fn video_editor_ready() -> Result<Option<crate::video_edit::VideoEditorPayload>, String> {
+    Ok(crate::video_editor_window::take_pending_editor())
+}
+
+#[tauri::command]
+pub fn close_video_editor(app: AppHandle) -> Result<(), String> {
+    crate::video_editor_window::hide_video_editor(&app)
 }
 
 #[tauri::command]

@@ -232,3 +232,16 @@ pub fn bootstrap(app: &AppHandle, db: &Database) -> Result<AppSettings, String> 
     register_hotkeys(app, &settings)?;
     Ok(settings)
 }
+
+/// Install the shortcut plugin immediately, then register bindings on a background path.
+pub fn bootstrap_nonblocking(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+    install_plugin(app).map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    let settings = settings.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = register_hotkeys(&handle, &settings) {
+            eprintln!("hotkey registration skipped: {e}");
+        }
+    });
+    Ok(())
+}

@@ -16,6 +16,9 @@ const CommandPalette = lazy(() =>
 const ScreenshotPopup = lazy(() =>
   import("./ScreenshotPopupPage").then((m) => ({ default: m.ScreenshotPopup }))
 );
+const VideoEditorPage = lazy(() =>
+  import("./VideoEditorPage").then((m) => ({ default: m.VideoEditorPage }))
+);
 
 const params = new URLSearchParams(window.location.search);
 const isSnipMode = params.get("mode") === "snip";
@@ -23,6 +26,7 @@ const isSnipMode = params.get("mode") === "snip";
 const isPopupView = params.get("view") === "popup";
 const isRecorderView = params.get("view") === "recorder";
 const isPaletteView = params.get("view") === "palette";
+const isVideoEditorView = params.get("view") === "video-editor";
 
 if (isSnipMode) {
   document.documentElement.classList.add("snip-mode");
@@ -48,6 +52,11 @@ if (isRecorderView) {
   document.body.classList.add("recorder-mode");
 }
 
+if (isVideoEditorView) {
+  document.documentElement.classList.add("video-editor-mode");
+  document.body.classList.add("video-editor-mode");
+}
+
 // Disable the WebView / Edge right-click menu in the desktop shell
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -61,6 +70,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <CommandPalette />
       ) : isRecorderView ? (
         <RecorderBarPage />
+      ) : isVideoEditorView ? (
+        <VideoEditorPage />
       ) : isSnipMode ? (
         <SnipPage />
       ) : (

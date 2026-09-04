@@ -112,6 +112,18 @@ pub fn park_snipper_window(snipper: &WebviewWindow) {
     let _ = snipper.set_focusable(false);
     let _ = snipper.set_size(Size::Physical(PhysicalSize::new(800, 600)));
     let _ = snipper.set_position(Position::Physical(PhysicalPosition::new(-20_000, -20_000)));
+}
+
+pub fn is_snipper_label(label: &str) -> bool {
+    label == "snipper" || label.starts_with("snipper-")
+}
+
+pub fn park_all_snipper_windows(app: &AppHandle) {
+    for (label, win) in app.webview_windows() {
+        if is_snipper_label(&label) {
+            park_snipper_window(&win);
+        }
+    }
     SNIP_OVERLAY_OPEN.store(false, Ordering::SeqCst);
 }
 

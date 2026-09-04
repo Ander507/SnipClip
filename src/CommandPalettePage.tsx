@@ -184,7 +184,11 @@ export function CommandPalette() {
           {loading && results.length === 0 ? (
             <p className="px-5 py-3 text-sm text-fg-muted">Searching…</p>
           ) : results.length === 0 ? (
-            <p className="px-5 py-3 text-sm text-fg-muted">No matches</p>
+            <p className="px-5 py-3 text-sm text-fg-muted">
+              {query.trim()
+                ? "No matches — try different keywords"
+                : "Copy something first — your recent clips will appear here"}
+            </p>
           ) : (
             results.map((item, index) => {
               const thumb =

@@ -175,6 +175,11 @@ impl Database {
                 key TEXT PRIMARY KEY NOT NULL,
                 value TEXT NOT NULL
             );
+            CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+                body,
+                content_type UNINDEXED,
+                tokenize = 'porter unicode61'
+            );
             ",
         )
         .map_err(|e| e.to_string())?;
@@ -183,7 +188,112 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.ensure_default_settings()?;
+        db.ensure_fts_populated()?;
         Ok(db)
+    }
+
+    /// Indexable body for FTS — skip huge image data-URLs; keep text/link/previews searchable.
+    fn fts_body(content_type: &str, content: &str, preview: &str) -> Option<String> {
+        match content_type {
+            "image" | "screenshot" => None,
+            "video" | "gif" => {
+                let p = preview.trim();
+                if p.is_empty() {
+                    None
+                } else {
+                    Some(p.to_string())
+                }
+            }
+            _ => {
+                let mut body = String::new();
+                let p = preview.trim();
+                if !p.is_empty() && !p.starts_with("data:") {
+                    body.push_str(p);
+                }
+                let c = content.trim();
+                if !c.is_empty() && !c.starts_with("data:") {
+                    if !body.is_empty() {
+                        body.push(' ');
+                    }
+                    // Cap so a giant paste cannot balloon the FTS index
+                    let take = c.chars().take(12_000).collect::<String>();
+                    body.push_str(&take);
+                }
+                if body.trim().is_empty() {
+                    None
+                } else {
+                    Some(body)
+                }
+            }
+        }
+    }
+
+    fn fts_upsert_conn(
+        conn: &Connection,
+        id: i64,
+        content_type: &str,
+        content: &str,
+        preview: &str,
+    ) -> Result<(), String> {
+        let _ = conn.execute("DELETE FROM items_fts WHERE rowid = ?1", params![id]);
+        if let Some(body) = Self::fts_body(content_type, content, preview) {
+            conn.execute(
+                "INSERT INTO items_fts(rowid, body, content_type) VALUES (?1, ?2, ?3)",
+                params![id, body, content_type],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn fts_delete_conn(conn: &Connection, id: i64) -> Result<(), String> {
+        conn.execute("DELETE FROM items_fts WHERE rowid = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn ensure_fts_populated(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM items_fts", [], |row| row.get(0))
+            .unwrap_or(0);
+        if count > 0 {
+            return Ok(());
+        }
+        let items: Vec<(i64, String, String, String)> = conn
+            .prepare("SELECT id, content_type, content, preview FROM items")
+            .map_err(|e| e.to_string())?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        for (id, ctype, content, preview) in items {
+            let _ = Self::fts_upsert_conn(&conn, id, &ctype, &content, &preview);
+        }
+        Ok(())
+    }
+
+    /// Turn free text into a safe FTS5 prefix query (`foo* bar*`).
+    fn fts_match_query(raw: &str) -> Option<String> {
+        let terms: Vec<String> = raw
+            .split_whitespace()
+            .filter_map(|w| {
+                let cleaned: String = w
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+                    .collect();
+                if cleaned.is_empty() {
+                    None
+                } else {
+                    Some(format!("{cleaned}*"))
+                }
+            })
+            .collect();
+        if terms.is_empty() {
+            None
+        } else {
+            Some(terms.join(" "))
+        }
     }
 
     fn ensure_default_settings(&self) -> Result<(), String> {
@@ -494,6 +604,7 @@ impl Database {
         .map_err(|e| e.to_string())?;
 
         let id = conn.last_insert_rowid();
+        let _ = Self::fts_upsert_conn(&conn, id, content_type, content, preview);
 
         if let Err(e) = conn.execute(
             "DELETE FROM items WHERE id IN (
@@ -505,6 +616,12 @@ impl Database {
         ) {
             // Row is already inserted — don't fail the whole write or the UI never sees it.
             eprintln!("history trim skipped: {e}");
+        } else {
+            // Drop FTS rows for any items that were trimmed out of the main table
+            let _ = conn.execute(
+                "DELETE FROM items_fts WHERE rowid NOT IN (SELECT id FROM items)",
+                [],
+            );
         }
 
         Ok(ClipboardItem {
@@ -515,6 +632,28 @@ impl Database {
             is_pinned: false,
             created_at: created_at_str,
         })
+    }
+
+    pub fn update_media_content(
+        &self,
+        id: i64,
+        content_type: &str,
+        content: &str,
+        preview: &str,
+    ) -> Result<ClipboardItem, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let updated = conn
+            .execute(
+                "UPDATE items SET content_type = ?1, content = ?2, preview = ?3 WHERE id = ?4 AND content_type IN ('video', 'gif')",
+                params![content_type, content, preview, id],
+            )
+            .map_err(|e| e.to_string())?;
+        if updated == 0 {
+            return Err("item not found".into());
+        }
+        let _ = Self::fts_upsert_conn(&conn, id, content_type, content, preview);
+        drop(conn);
+        self.get(id)?.ok_or_else(|| "item not found".to_string())
     }
 
     pub fn update_image_content(
@@ -620,6 +759,43 @@ impl Database {
         if trimmed.is_empty() {
             return self.list(None, None, 10);
         }
+
+        if let Some(match_q) = Self::fts_match_query(trimmed) {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT i.id, i.content_type,
+                        CASE WHEN i.content_type IN ('image', 'screenshot') THEN '' ELSE i.content END,
+                        i.preview, i.is_pinned, i.created_at
+                     FROM items_fts f
+                     JOIN items i ON i.id = f.rowid
+                     WHERE f MATCH ?1
+                     ORDER BY i.created_at DESC
+                     LIMIT 10",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![match_q], |row| {
+                    Ok(ClipboardItem {
+                        id: row.get(0)?,
+                        content_type: row.get(1)?,
+                        content: row.get(2)?,
+                        preview: row.get(3)?,
+                        is_pinned: row.get::<_, i64>(4)? != 0,
+                        created_at: row.get(5)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row.map_err(|e| e.to_string())?);
+            }
+            if !items.is_empty() {
+                return Ok(items);
+            }
+        }
+
+        // Fallback for punctuation-only queries or empty FTS hits
         self.list(None, Some(trimmed), 10)
     }
 
@@ -662,6 +838,7 @@ impl Database {
 
     pub fn delete(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let _ = Self::fts_delete_conn(&conn, id);
         conn.execute("DELETE FROM items WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
         Ok(())
@@ -718,6 +895,7 @@ impl Database {
         if updated == 0 {
             return Err("item not found or not editable".into());
         }
+        let _ = Self::fts_upsert_conn(&conn, id, content_type, content, preview);
         drop(conn);
         self.get(id)?.ok_or_else(|| "item not found".to_string())
     }
@@ -738,6 +916,10 @@ impl Database {
                 break;
             }
         }
+        let _ = conn.execute(
+            "DELETE FROM items_fts WHERE rowid NOT IN (SELECT id FROM items)",
+            [],
+        );
         Ok(())
     }
 }

@@ -12,6 +12,8 @@ mod screenshot_popup;
 mod snip;
 mod system_audio;
 mod themes;
+mod video_edit;
+mod video_editor_window;
 mod wayland;
 
 use db::Database;
@@ -47,6 +49,7 @@ pub fn run() {
             commands::update_clipboard_item,
             commands::capture_screen,
             commands::capture_screen_region,
+            commands::capture_region_ocr,
             commands::capture_region_wayland,
             commands::save_snip,
             commands::copy_image,
@@ -76,6 +79,12 @@ pub fn run() {
             commands::stop_region_recording,
             commands::pause_region_recording,
             commands::finalize_recording,
+            commands::process_video_clip,
+            commands::save_processed_recording,
+            commands::discard_recording,
+            commands::open_video_editor,
+            commands::video_editor_ready,
+            commands::close_video_editor,
             commands::show_recorder_bar,
             commands::hide_recorder_bar,
             commands::recorder_bar_ready,
@@ -104,25 +113,41 @@ pub fn run() {
             }
 
             recording::prewarm_encoder();
+            crate::ocr::prewarm();
 
             let app_data = app
                 .path()
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             let db_path = app_data.join("snipclip.db");
-            let database = Arc::new(Database::open(db_path).expect("failed to open database"));
-            if let Err(e) = database.check_and_run_auto_clear() {
-                eprintln!("auto-clear skipped: {e}");
-            }
+
+            // Lightweight open so commands have a handle; heavy cleanup runs below
+            let database = match Database::open(db_path) {
+                Ok(db) => Arc::new(db),
+                Err(e) => {
+                    eprintln!("database open failed: {e}");
+                    return Err(e.into());
+                }
+            };
+            app.manage(database.clone());
+
+            let db_for_clear = database.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = db_for_clear.check_and_run_auto_clear() {
+                    eprintln!("auto-clear skipped: {e}");
+                }
+            });
 
             #[cfg(desktop)]
             {
-                let settings = hotkeys::bootstrap(app.handle(), &database)
-                    .expect("failed to register global hotkeys");
+                let settings = database.get_settings().unwrap_or_default();
                 app.manage(Arc::new(HotkeyState::from_settings(&settings)));
+                // Plugin install + register_all off the blocking path so a hotkey failure cannot kill startup
+                if let Err(e) = hotkeys::bootstrap_nonblocking(app.handle(), &settings) {
+                    eprintln!("hotkey plugin setup skipped: {e}");
+                }
             }
 
-            app.manage(database);
             clipboard::start_monitor(app.handle().clone());
 
             // Keep snipper webview warm and hidden so the first hotkey is instant
@@ -133,6 +158,9 @@ pub fn run() {
 
             if let Some(popup) = app.get_webview_window("screenshot_popup") {
                 let _ = popup.hide();
+            }
+            if let Some(editor) = app.get_webview_window("video_editor") {
+                let _ = editor.hide();
             }
             // Autostart / --minimized: sit in tray only (hotkeys still work)
             let start_minimized =
@@ -199,6 +227,9 @@ pub fn run() {
                     clipboard::set_main_ui_visible(false);
                 }
                 if window.label() == "screenshot_popup" {
+                    let _ = window.hide();
+                }
+                if window.label() == "video_editor" {
                     let _ = window.hide();
                 }
             }

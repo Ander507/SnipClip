@@ -70,6 +70,15 @@ export function captureScreenRegion(
   return invoke("capture_screen_region", { x, y, width, height });
 }
 
+export function captureRegionOcr(
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<{ text: string; lineCount: number }> {
+  return invoke("capture_region_ocr", { x, y, width, height });
+}
+
 export function saveSnip(dataUrl: string, path: string): Promise<void> {
   return invoke("save_snip", { dataUrl, path });
 }
@@ -262,6 +271,83 @@ export function finalizeRecording(
   height: number
 ): Promise<FinalizeRecordingResult> {
   return invoke("finalize_recording", { filePath, format, width, height });
+}
+
+export interface CropParams {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface VideoEditorPayload {
+  filePath: string;
+  width: number;
+  height: number;
+  vaultId?: number | null;
+  isDraft?: boolean;
+}
+
+export function processVideoClip(args: {
+  inputPath: string;
+  outputFormat: string;
+  startSec: number;
+  endSec: number;
+  crop?: CropParams | null;
+  muteAudio: boolean;
+}): Promise<string> {
+  return invoke("process_video_clip", {
+    inputPath: args.inputPath,
+    outputFormat: args.outputFormat,
+    startSec: args.startSec,
+    endSec: args.endSec,
+    crop: args.crop ?? null,
+    muteAudio: args.muteAudio,
+  });
+}
+
+export function saveProcessedRecording(args: {
+  filePath: string;
+  outputFormat: string;
+  width: number;
+  height: number;
+  vaultId?: number | null;
+  discardInput?: string | null;
+}): Promise<FinalizeRecordingResult> {
+  return invoke("save_processed_recording", {
+    filePath: args.filePath,
+    outputFormat: args.outputFormat,
+    width: args.width,
+    height: args.height,
+    vaultId: args.vaultId ?? null,
+    discardInput: args.discardInput ?? null,
+  });
+}
+
+export function discardRecording(filePath: string, vaultId?: number | null): Promise<void> {
+  return invoke("discard_recording", { filePath, vaultId: vaultId ?? null });
+}
+
+export function openVideoEditor(args: {
+  filePath: string;
+  width?: number;
+  height?: number;
+  vaultId?: number | null;
+}): Promise<void> {
+  return invoke("open_video_editor", {
+    filePath: args.filePath,
+    width: args.width ?? null,
+    height: args.height ?? null,
+    vaultId: args.vaultId ?? null,
+  });
+}
+
+export function videoEditorReady(): Promise<VideoEditorPayload | null> {
+  return invoke("video_editor_ready");
+}
+
+export function closeVideoEditor(): Promise<void> {
+  return invoke("close_video_editor");
 }
 
 export function showRecorderBar(args: {

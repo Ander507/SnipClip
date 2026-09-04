@@ -1,12 +1,21 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { SnipSelector, type OverlayMode } from "./components/SnipSelector";
+import {
+  SnipSelector,
+  type OverlayMode,
+  type OverlayOrigin,
+} from "./components/SnipSelector";
 import { closeSnipper, finalizeScreenshot, getSettings } from "./lib/api";
 import type { CaptureResult } from "./lib/types";
 import { applyThemeFromSettings } from "./lib/theme";
 
 interface SnipReadyPayload {
   mode?: OverlayMode;
+  showControls?: boolean;
+  originX?: number;
+  originY?: number;
+  desktopOriginX?: number;
+  desktopOriginY?: number;
 }
 
 /**
@@ -15,6 +24,8 @@ interface SnipReadyPayload {
 export function SnipPage() {
   const [active, setActive] = useState(true);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("snip");
+  const [showControls, setShowControls] = useState(true);
+  const [overlayOrigin, setOverlayOrigin] = useState<OverlayOrigin | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.add("snip-mode");
@@ -35,7 +46,15 @@ export function SnipPage() {
 
     let unlisten: (() => void) | undefined;
     void listen<SnipReadyPayload>("snip-ready", (event) => {
-      setOverlayMode(event.payload?.mode === "record" ? "record" : "snip");
+      const payload = event.payload;
+      setOverlayMode(payload?.mode === "record" ? "record" : "snip");
+      setShowControls(payload?.showControls !== false);
+      if (
+        typeof payload?.originX === "number" &&
+        typeof payload?.originY === "number"
+      ) {
+        setOverlayOrigin({ originX: payload.originX, originY: payload.originY });
+      }
       setActive(true);
     }).then((u) => {
       unlisten = u;
@@ -67,6 +86,8 @@ export function SnipPage() {
       <SnipSelector
         active={active}
         initialMode={overlayMode}
+        showControls={showControls}
+        overlayOrigin={overlayOrigin}
         onCaptured={(capture) => void finish(capture)}
         onCancel={() => void finish(null)}
       />

@@ -66,12 +66,20 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: SnipClip ${{ github.ref_name }}
           releaseBody: |
-            Installers for this tag:
+            ## Install
 
-            - Windows: `.msi`, NSIS `.exe`, and **portable `.zip`** (no install)
-            - Linux: `.AppImage` and `.deb`
+            - **Windows:** NSIS `.exe`, `.msi`, or **portable `.zip`** (no install — unzip and run `SnipClip.exe`)
+            - **Linux:** `.AppImage` and `.deb`
 
-            Portable: unzip and run `SnipClip.exe` (WebView2 required — already on most Windows 10/11 PCs).
+            WebView2 is required on Windows and is already on most Windows 10/11 PCs.
+
+            ## What's new
+
+            See [CHANGELOG.md](https://github.com/Ander507/SnipClip/blob/master/CHANGELOG.md) for full release notes.
+
+            **Quick try:** install → copy something → `Ctrl+Shift+V` for the vault → `Alt+C` for the paste palette → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
+
+            Multi-monitor snip/record and the in-app video editor (trim / crop / mute / GIF) are included.
 
             The auto-updater uses `latest.json` from this release (installers only).
           releaseDraft: false

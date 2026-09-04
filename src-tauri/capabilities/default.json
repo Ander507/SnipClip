@@ -2,7 +2,15 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for main and snipper windows",
-  "windows": ["main", "snipper", "screenshot_popup", "recorder_bar", "command_palette"],
+  "windows": [
+    "main",
+    "snipper",
+    "snipper-*",
+    "screenshot_popup",
+    "recorder_bar",
+    "command_palette",
+    "video_editor"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-close",

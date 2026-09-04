@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Check,
   X,
+  Film,
 } from "lucide-react";
 import type { ClipboardItem } from "../lib/types";
 import {
@@ -35,6 +36,7 @@ function formatTime(iso: string) {
 function TypeIcon({ type, isCode }: { type: string; isCode?: boolean }) {
   if (isCode) return <Code2 size={14} />;
   if (type === "image" || type === "screenshot") return <ImageIcon size={14} />;
+  if (type === "video" || type === "gif") return <Film size={14} />;
   if (type === "link") return <Link2 size={14} />;
   return <Type size={14} />;
 }
@@ -56,6 +58,7 @@ interface Props {
   onPin: () => void;
   onDelete: () => void;
   onPreviewImage: () => void;
+  onEditVideo?: () => void;
   onOpenLink: (url: string) => void;
   onUpdate: (id: number, content: string) => void;
   onEditLayout?: (editing: boolean, lineCount: number) => void;
@@ -71,6 +74,7 @@ export function ClipboardItemRow({
   onPin,
   onDelete,
   onPreviewImage,
+  onEditVideo,
   onOpenLink,
   onUpdate,
   onEditLayout,
@@ -84,9 +88,10 @@ export function ClipboardItemRow({
   const lang = item.contentType === "text" ? detectLanguage(textBody) : "plain";
   const isCode = lang !== "plain";
   const isImage = item.contentType === "image" || item.contentType === "screenshot";
-  const isLink = !isImage && !isCode && isLinkItem(item.contentType, textBody);
+  const isVideo = item.contentType === "video" || item.contentType === "gif";
+  const isLink = !isImage && !isVideo && !isCode && isLinkItem(item.contentType, textBody);
   const href = isLink ? linkHrefFromText(textBody) : null;
-  const canEdit = !isImage && !isCode;
+  const canEdit = !isImage && !isVideo && !isCode;
 
   useEffect(() => {
     if (!editing) setDraft(item.content || item.preview || "");
@@ -127,9 +132,10 @@ export function ClipboardItemRow({
         if (editing) return;
         onSelect();
         if (isImage) onPreviewImage();
+        if (isVideo) onEditVideo?.();
       }}
       onDoubleClick={() => {
-        if (!isImage && !editing) onCopy();
+        if (!isImage && !isVideo && !editing) onCopy();
       }}
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-muted text-fg-muted">
@@ -150,6 +156,10 @@ export function ClipboardItemRow({
               : item.preview?.startsWith("data:")
                 ? "Image — click to preview"
                 : item.preview || "Image"}
+          </p>
+        ) : isVideo ? (
+          <p className="truncate text-xs font-medium text-fg-secondary">
+            {item.preview || (item.contentType === "gif" ? "GIF recording" : "Video recording")}
           </p>
         ) : isCode ? (
           <CodePreview content={textBody} />
@@ -252,6 +262,19 @@ export function ClipboardItemRow({
                 onClick={(e) => {
                   e.stopPropagation();
                   setEditing(true);
+                }}
+              >
+                <Pencil size={13} />
+              </button>
+            )}
+            {isVideo && (
+              <button
+                type="button"
+                title="Edit recording"
+                className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditVideo?.();
                 }}
               >
                 <Pencil size={13} />

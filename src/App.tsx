@@ -25,6 +25,7 @@ import {
   copyTextFromImage,
   isOcrAvailable,
   showMainWindow,
+  openVideoEditor,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
@@ -159,6 +160,21 @@ function App() {
       setClipboardPaused(Boolean(event.payload));
     }).then((u) => unsubs.push(u));
 
+    void listen<{ lineCount?: number; preview?: string }>("ocr-extracted", (event) => {
+      const lines = event.payload?.lineCount ?? 0;
+      const preview = event.payload?.preview?.trim();
+      if (lines > 0) {
+        setStatus(
+          preview
+            ? `Extracted ${lines} line${lines === 1 ? "" : "s"}: ${preview}`
+            : `Extracted ${lines} line${lines === 1 ? "" : "s"} of text`,
+          2800
+        );
+      } else {
+        setStatus("OCR text copied", 2000);
+      }
+    }).then((u) => unsubs.push(u));
+
     void listen<ScreenshotEditorRequest>("open-screenshot-editor", (event) => {
       const payload = event.payload;
       if (!payload) return;
@@ -245,6 +261,25 @@ function App() {
       await openUrl(url);
     } catch (err) {
       setStatus(String(err), 1600);
+    }
+  }
+
+  async function handleEditVideo(id: number) {
+    try {
+      const full = await getItem(id);
+      const path = full?.content?.trim();
+      if (!path) {
+        setStatus("Recording file not found", 2000);
+        return;
+      }
+      await openVideoEditor({
+        filePath: path,
+        vaultId: id,
+        width: 1280,
+        height: 720,
+      });
+    } catch (err) {
+      setStatus(String(err), 2000);
     }
   }
 
@@ -435,6 +470,8 @@ function App() {
               <ClipboardList
                 items={items}
                 selectedId={selectedId}
+                hotkeySnip={formatHotkeyShort(settings.hotkeySnip)}
+                hotkeyPalette="Alt+C"
                 ocrAvailable={ocrAvailable}
                 onSelect={setSelectedId}
                 onCopy={(id) => void handleCopy(id)}
@@ -442,6 +479,7 @@ function App() {
                 onPin={(id) => void handlePin(id)}
                 onDelete={(id) => void handleDelete(id)}
                 onPreviewImage={(id) => void openImagePreview(id)}
+                onEditVideo={(id) => void handleEditVideo(id)}
                 onOpenLink={(url) => void handleOpenLink(url)}
                 onUpdate={(id, content) => void handleUpdateItem(id, content)}
               />

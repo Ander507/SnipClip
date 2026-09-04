@@ -86,7 +86,7 @@ struct Mp4PipeEncoder {
 
 /// `auto_download` shells out to `ffmpeg -version` on every call, costing ~750 ms each time.
 /// Resolving the binary once per process keeps that off the front of every recording.
-fn ffmpeg_binary() -> Result<PathBuf, String> {
+pub(crate) fn ffmpeg_binary() -> Result<PathBuf, String> {
     static READY: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
     READY
         .get_or_init(|| {

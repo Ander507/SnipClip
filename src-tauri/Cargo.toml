@@ -1,8 +1,8 @@
 [package]
 name = "snipclip"
-version = "1.2.1"
-description = "Lightning-fast clipboard manager and screenshot suite"
-authors = ["you"]
+version = "1.4.0"
+description = "Clipboard vault, screenshots, screen recording, and OCR in one tray app"
+authors = ["Ander507"]
 edition = "2021"
 
 [lib]
@@ -64,4 +64,8 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Media",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_UI_Shell",
 ] }

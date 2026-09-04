@@ -2,13 +2,16 @@ use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
 use parking_lot::Mutex;
 use rten::Model;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::thread;
 
 const DETECTION_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
 const RECOGNITION_URL: &str =
     "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
 
 static ENGINE: OnceLock<Mutex<Option<OcrEngine>>> = OnceLock::new();
+static OCIRS_READY: AtomicBool = AtomicBool::new(false);
 
 fn engine_slot() -> &'static Mutex<Option<OcrEngine>> {
     ENGINE.get_or_init(|| Mutex::new(None))
@@ -66,8 +69,20 @@ where
     let mut guard = slot.lock();
     if guard.is_none() {
         *guard = Some(init_ocrs_engine()?);
+        OCIRS_READY.store(true, Ordering::Release);
     }
     f(guard.as_ref().expect("engine initialized"))
+}
+
+/// Load OCR models on a background thread so startup and IPC stay responsive.
+pub fn prewarm() {
+    thread::spawn(|| match init_ocrs_engine() {
+        Ok(engine) => {
+            *engine_slot().lock() = Some(engine);
+            OCIRS_READY.store(true, Ordering::Release);
+        }
+        Err(e) => eprintln!("ocr prewarm skipped: {e}"),
+    });
 }
 
 #[cfg(windows)]
@@ -88,13 +103,7 @@ fn win_ocr_png_bytes(bytes: &[u8]) -> Result<String, String> {
 }
 
 pub fn ocr_png_bytes(bytes: &[u8]) -> Result<String, String> {
-    if let Ok(text) = with_engine(|engine| ocr_with_engine(engine, bytes)) {
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-
+    // Prefer Windows.Media.Ocr first (offline, no bundled models) then fall back to ocrs
     #[cfg(windows)]
     {
         if let Ok(text) = win_ocr_png_bytes(bytes) {
@@ -102,6 +111,13 @@ pub fn ocr_png_bytes(bytes: &[u8]) -> Result<String, String> {
             if !trimmed.is_empty() {
                 return Ok(trimmed.to_string());
             }
+        }
+    }
+
+    if let Ok(text) = with_engine(|engine| ocr_with_engine(engine, bytes)) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
         }
     }
 
@@ -119,7 +135,7 @@ fn ocr_with_engine(engine: &OcrEngine, bytes: &[u8]) -> Result<String, String> {
 }
 
 pub fn is_available() -> bool {
-    if with_engine(|_| Ok(())).is_ok() {
+    if OCIRS_READY.load(Ordering::Acquire) {
         return true;
     }
     #[cfg(windows)]

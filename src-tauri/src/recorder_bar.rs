@@ -48,10 +48,7 @@ pub fn show_recorder_bar(
     format: String,
     fps: u32,
 ) -> Result<(), String> {
-    if let Some(snipper) = app.get_webview_window("snipper") {
-        let _ = snipper.hide();
-        crate::screenshot_popup::park_snipper_window(&snipper);
-    }
+    crate::screenshot_popup::park_all_snipper_windows(app);
     // hiding the tauri overlay and sleeping 150ms so windows DWM clears it from the gpu buffer before we capture
     std::thread::sleep(std::time::Duration::from_millis(150));
 
