@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use crate::recording::{ffmpeg_binary, recordings_dir, sanitize_even_dimensions};
+use crate::recording::{
+    ffmpeg_binary, ffmpeg_command, recordings_dir, sanitize_even_dimensions,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,7 +56,7 @@ fn output_path(format: &str) -> Result<PathBuf, String> {
 
 fn run_ffmpeg(args: &[String]) -> Result<(), String> {
     let ffmpeg = ffmpeg_binary()?;
-    let output = Command::new(&ffmpeg)
+    let output = ffmpeg_command(&ffmpeg)
         .args(args)
         .output()
         .map_err(|e| format!("failed to run ffmpeg: {e}"))?;

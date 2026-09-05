@@ -10,6 +10,35 @@ use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Hide the console window ffmpeg would otherwise flash on Windows.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub(crate) fn ffmpeg_command(ffmpeg: impl AsRef<Path>) -> Command {
+    let mut cmd = Command::new(ffmpeg.as_ref());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+fn map_encoder_io_error(error: std::io::Error) -> String {
+    // Windows ERROR_BROKEN_PIPE (109) — usually the user closed the ffmpeg window.
+    let raw = error.raw_os_error();
+    let text = error.to_string();
+    if raw == Some(109)
+        || text.contains("os error 109")
+        || text.to_ascii_lowercase().contains("broken pipe")
+    {
+        return "Recording stopped because the encoder closed. Use Stop in SnipClip — don't close ffmpeg.".into();
+    }
+    text
+}
+
 const MAX_FRAMES: usize = 450;
 const MAX_EDGE: u32 = 1280;
 
@@ -112,7 +141,7 @@ impl Mp4PipeEncoder {
         let fps_s = fps.max(1).min(60).to_string();
         let out = output.to_string_lossy().replace('\\', "/");
 
-        let mut child = Command::new(ffmpeg)
+        let mut child = ffmpeg_command(&ffmpeg)
             .args([
                 "-y",
                 "-f",
@@ -168,7 +197,7 @@ impl Mp4PipeEncoder {
             .as_mut()
             .ok_or_else(|| "encoder stdin closed".to_string())?
             .write_all(bgra)
-            .map_err(|e| e.to_string())
+            .map_err(map_encoder_io_error)
     }
 
     fn abort(mut self) {
@@ -201,7 +230,7 @@ impl Mp4PipeEncoder {
 
 fn mux_system_audio(video: &Path, audio: &Path, output: &Path) -> Result<(), String> {
     let ffmpeg = ffmpeg_binary()?;
-    let result = Command::new(ffmpeg)
+    let result = ffmpeg_command(&ffmpeg)
         .args([
             "-y",
             "-i",

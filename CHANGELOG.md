@@ -4,6 +4,13 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-09-05
+
+### Recording
+
+- **Hide ffmpeg console** on Windows during record/edit so the encoder window no longer flashes and can't be closed by accident.
+- **Clearer encoder errors:** broken-pipe / os error 109 maps to a short “use Stop in SnipClip” message instead of the raw OS string.
+
 ## [1.5.0] — 2026-09-05
 
 ### Vault + library polish
