@@ -10,6 +10,7 @@ import {
   Settings,
   Aperture,
   Timer,
+  Film,
 } from "lucide-react";
 import type { Category } from "../lib/types";
 
@@ -18,9 +19,14 @@ const NAV: { id: Category; label: string; icon: typeof LayoutGrid }[] = [
   { id: "text", label: "Text", icon: Type },
   { id: "images", label: "Images", icon: ImageIcon },
   { id: "screenshots", label: "Screenshots", icon: Aperture },
+  { id: "videos", label: "Videos", icon: Film },
   { id: "links", label: "Links", icon: Link2 },
   { id: "pinned", label: "Pinned", icon: Pin },
 ];
+
+const TAB_LABELS: Record<string, string> = Object.fromEntries(
+  NAV.map((n) => [n.id, n.label])
+);
 
 interface Props {
   category: Category;
@@ -31,6 +37,7 @@ interface Props {
   onSettings: () => void;
   settingsOpen: boolean;
   count: number;
+  counts: Record<string, number>;
   snipHotkeyLabel: string;
   snipDelayEnabled: boolean;
 }
@@ -44,17 +51,20 @@ export function Sidebar({
   onSettings,
   settingsOpen,
   count,
+  counts,
   snipHotkeyLabel,
   snipDelayEnabled,
 }: Props) {
+  const visibleTabs = NAV.filter((n) => counts[n.id] !== 0 || n.id === "all");
   return (
     <aside className="flex w-52 shrink-0 flex-col justify-between border-r border-line bg-raised p-3">
       <nav className="flex flex-col gap-0.5">
         <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
           Library
         </p>
-        {NAV.map(({ id, label, icon: Icon }) => {
+        {visibleTabs.map(({ id, label, icon: Icon }) => {
           const active = !settingsOpen && category === id;
+          const n = counts[id] ?? 0;
           return (
             <button
               key={id}
@@ -69,6 +79,16 @@ export function Sidebar({
             >
               <Icon size={15} />
               <span>{label}</span>
+              {n > 0 && (
+                <span
+                  className={clsx(
+                    "ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                    active ? "bg-accent text-accent-fg" : "bg-muted text-fg-muted"
+                  )}
+                >
+                  {n}
+                </span>
+              )}
             </button>
           );
         })}
@@ -121,3 +141,5 @@ export function Sidebar({
     </aside>
   );
 }
+
+export { TAB_LABELS };

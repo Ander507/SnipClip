@@ -27,6 +27,8 @@ export function itemMatchesCategory(
   if (category === "text") return item.contentType === "text";
   if (category === "images") return item.contentType === "image";
   if (category === "screenshots") return item.contentType === "screenshot";
+  if (category === "videos")
+    return item.contentType === "video" || item.contentType === "gif";
   if (category === "links") return item.contentType === "link";
   if (category === "pinned") return item.isPinned;
   return true;

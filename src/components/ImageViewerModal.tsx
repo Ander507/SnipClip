@@ -95,7 +95,7 @@ export function ImageViewerModal({
             className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-hover px-4 py-2 text-xs font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-40"
           >
             <ScanText size={13} />
-            {extracting ? "Reading text…" : "Copy text from image"}
+            {extracting ? "Reading text…" : "Copy Text (OCR)"}
           </button>
           )}
           <button

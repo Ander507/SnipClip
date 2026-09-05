@@ -11,6 +11,7 @@ export type DetectedLanguage =
   | "json"
   | "sql"
   | "go"
+  | "shell"
   | "code"
   | "plain";
 
@@ -34,7 +35,38 @@ export function detectLanguage(text: string | null | undefined): DetectedLanguag
     if (lang === "sql") return "sql";
     if (lang === "go" || lang === "golang") return "go";
     if (lang === "java") return "java";
+    if (
+      lang === "bash" ||
+      lang === "sh" ||
+      lang === "shell" ||
+      lang === "zsh" ||
+      lang === "powershell" ||
+      lang === "ps1" ||
+      lang === "cmd" ||
+      lang === "bat"
+    ) {
+      return "shell";
+    }
     return "code";
+  }
+
+  // Terminal / compiler noise before SQL — PowerShell's Select-Object used to look like SQL
+  if (
+    /error\[E\d+\]:|could not compile|cargo\s*:|rustc --explain|^\s*-->\s+\S+\.\w+:\d+/m.test(
+      text
+    ) ||
+    /npm error|Missing script:|PS [A-Z]:\\|CategoryInfo\s*:|FullyQualifiedErrorId/i.test(text) ||
+    (/^(?:C:\\|>|\$|#)\s*\S+/m.test(trimmed) &&
+      /\b(?:npm|cargo|git|dir|cd|ls|Get-|Set-|Write-)\b/i.test(text))
+  ) {
+    if (
+      /fn\s+\w+|let\s+mut|println!|#\[derive|pub\s+fn|impl\s+\w+|use\s+\w+::|error\[E\d+\]:/.test(
+        text
+      )
+    ) {
+      return "rust";
+    }
+    return "shell";
   }
 
   // Rust
@@ -80,8 +112,11 @@ export function detectLanguage(text: string | null | undefined): DetectedLanguag
     }
   }
 
-  // SQL
-  if (/\b(SELECT|INSERT\s+INTO|UPDATE\s+\w+\s+SET|CREATE\s+TABLE|DELETE\s+FROM)\b/i.test(text)) {
+  // SQL — require real query shape (avoid PowerShell Select-Object)
+  if (
+    /\bSELECT\b(?!\s*-)[\s\S]{0,120}\bFROM\b/i.test(text) ||
+    /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|CREATE\s+TABLE|DELETE\s+FROM|ALTER\s+TABLE)\b/i.test(text)
+  ) {
     return "sql";
   }
 
@@ -168,6 +203,7 @@ export function languageLabel(lang: DetectedLanguage): string {
     json: "JSON",
     sql: "SQL",
     go: "Go",
+    shell: "Shell",
     code: "Code",
     plain: "Text",
   };
@@ -187,6 +223,7 @@ export function highlighterLanguage(lang: DetectedLanguage): string {
     json: "json",
     sql: "sql",
     go: "go",
+    shell: "bash",
     code: "javascript",
     plain: "text",
   };

@@ -1,11 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { RotateCcw, Keyboard, Trash2, Power, Palette, Moon, Sun, Ban, Download, RefreshCw } from "lucide-react";
-import type { AppSettings, ClearInterval } from "../lib/types";
+import {
+  RotateCcw,
+  Keyboard,
+  Trash2,
+  Power,
+  Palette,
+  Moon,
+  Sun,
+  Ban,
+  Download,
+  RefreshCw,
+  ArrowUp,
+  ArrowDown,
+  Eye,
+  EyeOff,
+  LayoutGrid,
+  Lock,
+  Unlock,
+} from "lucide-react";
+import type { AppSettings, ClearInterval, Category } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
-import { getSettings, updateSettings, getRunningApps } from "../lib/api";
+import { getSettings, updateSettings, getRunningApps, exportVault, importVault, setVaultPassword, isVaultLocked } from "../lib/api";
 import { ACCENTS, applyTheme, type AccentColor, type ThemeMode } from "../lib/theme";
 import { ThemeEditor } from "./ThemeEditor";
+import { save, open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { checkForAppUpdate, formatUpdateError, installAppUpdate } from "../lib/updates";
 import type { Update } from "@tauri-apps/plugin-updater";
@@ -16,6 +35,16 @@ interface Props {
 }
 
 type CaptureTarget = "clipboard" | "snip" | "record" | null;
+
+const TAB_ORDER: { id: Category; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "text", label: "Text" },
+  { id: "images", label: "Images" },
+  { id: "screenshots", label: "Screenshots" },
+  { id: "videos", label: "Videos" },
+  { id: "links", label: "Links" },
+  { id: "pinned", label: "Pinned" },
+];
 
 const STEALTH_SNIP_PRESETS = [
   { label: "Ctrl + Alt + Q", value: "Control+Alt+Q" },
@@ -87,7 +116,12 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.themeBackgroundImage !== b.themeBackgroundImage ||
     a.ignoreList.join("\0") !== b.ignoreList.join("\0") ||
     a.snipDelayEnabled !== b.snipDelayEnabled ||
-    a.snipDelayMs !== b.snipDelayMs
+    a.snipDelayMs !== b.snipDelayMs ||
+    JSON.stringify(a.sidebarTabs ?? []) !== JSON.stringify(b.sidebarTabs ?? []) ||
+    JSON.stringify(a.vaultPasswordHash ?? []) !==
+      JSON.stringify(b.vaultPasswordHash ?? []) ||
+    JSON.stringify(a.vaultPasswordSalt ?? []) !==
+      JSON.stringify(b.vaultPasswordSalt ?? [])
   );
 }
 
@@ -102,6 +136,9 @@ function normalizeSettings(s: AppSettings): AppSettings {
     themeBackgroundImage: s.themeBackgroundImage ?? null,
     snipDelayEnabled: s.snipDelayEnabled ?? false,
     snipDelayMs: s.snipDelayMs ?? 3000,
+    sidebarTabs: s.sidebarTabs ?? DEFAULT_SETTINGS.sidebarTabs,
+    vaultPasswordHash: s.vaultPasswordHash ?? null,
+    vaultPasswordSalt: s.vaultPasswordSalt ?? null,
     hotkeyRecord: s.hotkeyRecord ?? DEFAULT_SETTINGS.hotkeyRecord,
   };
 }
@@ -121,6 +158,10 @@ export function SettingsView({ onClose, onSaved }: Props) {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+  const [vaultLocked, setVaultLocked] = useState(false);
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [vaultMessage, setVaultMessage] = useState<string | null>(null);
   const pendingUpdate = useRef<Update | null>(null);
   const captureRef = useRef<CaptureTarget>(null);
   captureRef.current = capturing;
@@ -133,6 +174,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
     });
     void getVersion().then(setCurrentVersion).catch(console.error);
     void refreshRunningApps();
+    void isVaultLocked().then(setVaultLocked).catch(console.error);
   }, []);
 
   async function refreshRunningApps() {
@@ -217,6 +259,76 @@ export function SettingsView({ onClose, onSaved }: Props) {
   function handleBack() {
     if (settings) applyTheme(settings);
     onClose();
+  }
+
+  async function handleLockVault() {
+    if (!vaultPassword || vaultBusy) return;
+    setVaultBusy(true);
+    setVaultMessage(null);
+    try {
+      await setVaultPassword(vaultPassword);
+      setVaultLocked(true);
+      setVaultPassword("");
+      setSavedFlash(true);
+      setVaultMessage(
+        "Vault locked. Keep your password safe — there is no recovery."
+      );
+      setTimeout(() => setSavedFlash(false), 2000);
+      setTimeout(() => setVaultMessage(null), 5000);
+    } catch (err) {
+      setVaultMessage(String(err));
+    } finally {
+      setVaultBusy(false);
+    }
+  }
+
+  async function handleUnlockVault() {
+    if (vaultBusy) return;
+    setVaultBusy(true);
+    setVaultMessage(null);
+    try {
+      await setVaultPassword("");
+      setVaultLocked(false);
+      setVaultPassword("");
+      setSavedFlash(true);
+      setVaultMessage("Vault unlocked.");
+      setTimeout(() => setSavedFlash(false), 2000);
+      setTimeout(() => setVaultMessage(null), 4000);
+    } catch (err) {
+      setVaultMessage(String(err));
+    } finally {
+      setVaultBusy(false);
+    }
+  }
+
+  async function handleExportVault() {
+    try {
+      const path = await save({
+        defaultPath: `snipclip-vault-${new Date().toISOString().slice(0, 10)}.db`,
+        filters: [{ name: "SQLite vault", extensions: ["db"] }],
+      });
+      if (!path || typeof path !== "string") return;
+      await exportVault(path);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1400);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleImportVault() {
+    try {
+      const path = await open({
+        multiple: false,
+        filters: [{ name: "SQLite vault", extensions: ["db"] }],
+      });
+      if (!path || typeof path !== "string") return;
+      await importVault(path);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1400);
+    } catch (err) {
+      setError(String(err));
+    }
   }
 
   async function checkForUpdates() {
@@ -375,6 +487,102 @@ export function SettingsView({ onClose, onSaved }: Props) {
           </div>
 
           <ThemeEditor draft={draft} setDraft={setDraft} />
+        </section>
+
+        <section className="space-y-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+              <LayoutGrid size={11} /> Library tabs
+            </h3>
+            <p className="mt-1 text-[12px] text-fg-muted">
+              Reorder or hide the categories shown in the sidebar. "All" stays visible.
+            </p>
+          </div>
+          <div className="space-y-1 rounded-lg border border-line bg-raised px-4 py-3">
+            {TAB_ORDER.map((tab) => {
+              const enabled = draft.sidebarTabs.includes(tab.id);
+              const visibleIndex = draft.sidebarTabs.indexOf(tab.id);
+              const canMoveUp = visibleIndex > 0;
+              const canMoveDown = visibleIndex >= 0 && visibleIndex < draft.sidebarTabs.length - 1;
+              return (
+                <div key={tab.id} className="flex items-center gap-2 py-1">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <button
+                      type="button"
+                      aria-label={`Toggle ${tab.label}`}
+                      title={enabled ? "Hide tab" : "Show tab"}
+                      onClick={() =>
+                        setDraft((prev) => {
+                          if (!prev) return prev;
+                          const tabs = prev.sidebarTabs.filter((t) => t !== tab.id);
+                          if (!enabled && !tabs.includes(tab.id)) {
+                            const ordered = TAB_ORDER.map((t) => t.id).filter((t) =>
+                              tabs.includes(t)
+                            );
+                            if (tab.id !== "all") ordered.push(tab.id);
+                            return { ...prev, sidebarTabs: ordered };
+                          }
+                          return { ...prev, sidebarTabs: tabs };
+                        })
+                      }
+                      className={clsx(
+                        "rounded p-1 transition",
+                        enabled ? "text-accent hover:bg-hover" : "text-fg-faint hover:text-fg"
+                      )}
+                    >
+                      {enabled ? <Eye size={13} /> : <EyeOff size={13} />}
+                    </button>
+                    <span
+                      className={clsx(
+                        "min-w-0 flex-1 text-[13px]",
+                        enabled ? "text-fg-secondary" : "text-fg-faint line-through"
+                      )}
+                    >
+                      {tab.label}
+                    </span>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        aria-label={`Move ${tab.label} up`}
+                        disabled={!canMoveUp}
+                        onClick={() =>
+                          setDraft((prev) => {
+                            if (!prev) return prev;
+                            const tabs = [...prev.sidebarTabs];
+                            const i = visibleIndex;
+                            if (i < 0 || i >= tabs.length) return prev;
+                            [tabs[i], tabs[i - 1]] = [tabs[i - 1], tabs[i]];
+                            return { ...prev, sidebarTabs: tabs };
+                          })
+                        }
+                        className="rounded p-1 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-30"
+                      >
+                        <ArrowUp size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Move ${tab.label} down`}
+                        disabled={!canMoveDown}
+                        onClick={() =>
+                          setDraft((prev) => {
+                            if (!prev) return prev;
+                            const tabs = [...prev.sidebarTabs];
+                            const i = visibleIndex;
+                            if (i < 0 || i >= tabs.length - 1) return prev;
+                            [tabs[i], tabs[i + 1]] = [tabs[i + 1], tabs[i]];
+                            return { ...prev, sidebarTabs: tabs };
+                          })
+                        }
+                        className="rounded p-1 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-30"
+                      >
+                        <ArrowDown size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
 
         <section className="space-y-3">
@@ -630,6 +838,91 @@ export function SettingsView({ onClose, onSaved }: Props) {
               </select>
             </div>
           )}
+        </section>
+
+        <section className="space-y-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+              <Download size={11} /> Vault backup
+            </h3>
+            <p className="mt-1 text-[12px] text-fg-muted">
+              Back up the local SQLite vault to a file, or restore one. Restore applies on next launch.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 rounded-lg border border-line bg-raised px-4 py-3">
+            <button
+              type="button"
+              onClick={() => void handleExportVault()}
+              className="inline-flex items-center gap-1.5 rounded-md border border-line bg-hover px-3 py-2 text-[12px] font-medium text-fg-secondary transition hover:bg-muted"
+            >
+              <Download size={12} /> Export vault…
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleImportVault()}
+              className="inline-flex items-center gap-1.5 rounded-md border border-line bg-hover px-3 py-2 text-[12px] font-medium text-fg-secondary transition hover:bg-muted"
+            >
+              <RotateCcw size={12} /> Import vault…
+            </button>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+              <Lock size={11} /> Vault lock
+            </h3>
+            <p className="mt-1 text-[12px] text-fg-muted">
+              Encrypt the vault at rest with a password. Keep it safe — there is no recovery.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-lg border border-line bg-raised px-4 py-3">
+            {vaultLocked ? (
+              <button
+                type="button"
+                onClick={() => void handleUnlockVault()}
+                disabled={vaultBusy}
+                className="inline-flex items-center gap-1.5 rounded-md border border-line bg-hover px-3 py-2 text-[12px] font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-50"
+              >
+                <Unlock size={12} /> Unlock vault
+              </button>
+            ) : (
+              <>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={vaultPassword}
+                  onChange={(e) => setVaultPassword(e.target.value)}
+                  disabled={vaultBusy}
+                  placeholder="New password"
+                  className="w-full rounded-md border border-line bg-inset px-3 py-2 text-[13px] text-fg outline-none placeholder:text-fg-faint focus:border-accent"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleLockVault()}
+                  disabled={vaultBusy || !vaultPassword}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-[12px] font-semibold text-accent-fg hover:brightness-110 disabled:opacity-50"
+                >
+                  <Lock size={12} /> Lock vault
+                </button>
+              </>
+            )}
+            {vaultMessage && (
+              <p
+                className={clsx(
+                  "text-[12px] leading-relaxed",
+                  vaultMessage.toLowerCase().includes("no recovery") ||
+                    vaultMessage.toLowerCase().includes("locked")
+                    ? "font-medium text-accent"
+                    : vaultMessage.toLowerCase().includes("unlock")
+                      ? "text-fg-secondary"
+                      : "text-danger"
+                )}
+              >
+                {vaultMessage}
+              </p>
+            )}
+          </div>
         </section>
 
         <section className="space-y-3">

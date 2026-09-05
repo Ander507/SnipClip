@@ -10,6 +10,7 @@ import {
   Hash,
   Copy,
   Save,
+  ScanText,
   X,
   MousePointer2,
   Pipette,
@@ -19,7 +20,7 @@ import {
   Redo2,
 } from "lucide-react";
 import type { AnnotateTool, CaptureResult } from "../lib/types";
-import { copyImage, copyText, saveSnip, saveSnipToVault, updateVaultImage } from "../lib/api";
+import { copyImage, copyText, runOcr, saveSnip, saveSnipToVault, updateVaultImage } from "../lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 
 interface Props {
@@ -734,6 +735,27 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
     }
   }
 
+  async function handleOcr() {
+    setBusy(true);
+    try {
+      const out = await exportAnnotated();
+      if (!out) return;
+      const text = (await runOcr(out.dataUrl)).trim();
+      if (!text) {
+        showToast("No text found");
+        return;
+      }
+      await copyText(text);
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0).length;
+      const chars = text.length;
+      showToast(`OCR copied · ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars`);
+    } catch (err) {
+      showToast(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const showBlurControls = tool === "blur" || strokes.some((s) => s.tool === "blur");
   const showWidthControls = WIDTH_TOOLS.includes(tool);
   const showFillControls = FILL_TOOLS.includes(tool);
@@ -910,6 +932,15 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
           className="flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-semibold text-accent-fg transition hover:brightness-110 disabled:opacity-50"
         >
           <Copy size={13} /> Copy
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          title="Copy Text (OCR)"
+          onClick={() => void handleOcr()}
+          className="flex h-9 items-center gap-1.5 rounded-md bg-hover px-3 text-[12px] font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-50"
+        >
+          <ScanText size={13} /> OCR
         </button>
         <button
           type="button"

@@ -1,6 +1,8 @@
 # SnipClip
 
-One tray app for clipboard history, screenshots, screen recording, OCR, and in-app video trim — private, local, and fast.
+A tray app for clipboard history, screenshots, screen recording, OCR, and in-app video trim — private, local, and fast.
+
+> **Win+V is shit.** Windows 11 ships a clipboard history called `Win+V`. It caps at ~25 items, syncs to your Microsoft account, and shows only plain text and images. No search. No categories. No OCR. No screenshots. No recording. No editor. No command palette. SnipClip is the answer — a full capture studio that stays local, with none of that.
 
 <p align="center">
   <img src="logo-source.png" alt="SnipClip logo" width="160" />
@@ -31,19 +33,33 @@ One tray app for clipboard history, screenshots, screen recording, OCR, and in-a
 5. Press **`Ctrl+Shift+S`** to snip a region on **any monitor**, annotate, and save to the vault.
 6. Press **`Ctrl+Shift+R`** to record a region as MP4 or GIF, then trim/crop/mute in the built-in video editor.
 
-All shortcuts are configurable in Settings.
+All shortcuts are configurable in Settings. If one is already taken by Windows (Win+V, Snipping Tool, Game Bar, etc.), SnipClip tells you instead of failing silently.
 
-## Why SnipClip?
+## Why SnipClip? (vs. Windows 11 Win+V)
 
-Most clipboard tools stop at history. Screenshot tools stop at capture. SnipClip combines both — plus region recording, OCR, a command palette, and a lightweight video editor — in a single native desktop app that stays out of your way.
+Windows 11 ships a clipboard history (`Win+V`). It's a 25-item, cloud-synced, plain-text-and-images-only tray. SnipClip is what Win+V should have been — a full capture studio that stays local.
 
-| Typical tool | SnipClip |
+| Windows 11 `Win+V` | SnipClip |
 |---|---|
-| Clipboard history only | Vault + fast **`Alt+C`** palette (FTS5 search) |
-| Full-screen snips | Multi-monitor region capture with draw, blur, arrows, callouts |
-| Separate recorder | Region MP4/GIF + in-app trim/crop/mute + optional WASAPI desktop audio |
-| Electron bloat | **Tauri 2 + Rust** — small binary, WebView UI, native system work |
-| Cloud sync | **Local SQLite vault** — your data stays on your machine |
+| ~25 item cap, then it forgets | **Unlimited** local SQLite vault |
+| Cloud sync (Microsoft account) | **Local only** — your data stays on your machine |
+| Plain text + images | Text, links, code, math, images, screenshots, recordings |
+| No search | **FTS5 search** + `Alt+C` quick-paste palette |
+| No categories | All, Text, Images, Screenshots, Videos, Links, Pinned — **reorder/hide** in Settings |
+| No pinning beyond the cap | **Pin anything**, forever |
+| No OCR | **Copy text from any image** (native Windows Media OCR, no bundled models) |
+| Full-screen snips only | **Multi-monitor** region capture + draw, blur, arrows, callouts |
+| No recording | Region **MP4/GIF** + in-app trim/crop/mute + optional WASAPI desktop audio |
+| No editor | **In-app video editor** — trim, crop, mute, MP4↔GIF |
+| One theme | **Custom theme packs** + glassmorphic surfaces |
+| Slow to open | **Tray-first**, instant hotkeys, signed auto-updates |
+| No ignore list | **Skip copies** from WhisperFlow, 1Password, Edge, etc. |
+| No auto-clear | **Schedule purge** of unpinned history (never / reboot / daily / weekly) |
+| No command palette | **`Alt+C`** quick paste over any app |
+| No math | **Auto-solve** copied arithmetic and swap the clipboard for the answer |
+| No encryption | **Password-protected vault** (AES-256-GCM at rest, Argon2id key) |
+
+Everything in SnipClip runs locally in Rust — no cloud, no account, no telemetry. Win+V syncs your clipboard to Microsoft. SnipClip keeps yours on your machine.
 
 ## Keyboard shortcuts
 
@@ -54,16 +70,16 @@ Most clipboard tools stop at history. Screenshot tools stop at capture. SnipClip
 | Snip region | `Ctrl+Shift+S` |
 | Record region | `Ctrl+Shift+R` |
 
-Inside the vault: **`↑↓`** navigate · **`Enter`** copy · **`P`** pin · **`Delete`** remove
+Inside the vault: **`↑↓`** navigate · **`Enter`** copy · **`P`** pin · **`Delete`** remove · **`1`**-**`7`** switch tab
 
 ## Features
 
-- **Clipboard vault** — searchable history for text, links, code, images, and recordings in local SQLite.
-- **Fast paste palette** — `Alt+C` opens a lightweight search window powered by FTS5.
-- **Multi-monitor snips** — one overlay per display; physical coordinates handle negative desktop origins.
-- **Screenshots and annotation** — draw, highlight, blur, arrows, callouts, zoom, pan.
-- **Screen recording** — region MP4/GIF with optional Windows desktop audio, then in-app trim/crop/mute/export.
-- **OCR** — copy text from images on Windows (models prewarm off the UI thread).
+- **Clipboard vault + `Alt+C` palette** — searchable history for text, links, code, math, images, and recordings in local SQLite. `Alt+C` opens a lightweight FTS5-powered search window so you can paste a clip without leaving the app you're in.
+- **Multi-monitor capture + annotation** — one overlay per display; physical coordinates handle negative desktop origins, so a secondary screen with a negative position still crops correctly. Draw, highlight, blur, arrows, callouts. The overlay hides and parks off-screen before capture, then waits ~150 ms so DWM flushes the compositor — no translucent UI baked into the shot.
+- **Screen recording + in-app trim** — region MP4/GIF with optional Windows desktop audio, then in-app trim/crop/mute/export. Simple MP4 trims use stream-copy for near-instant cuts.
+- **OCR + math auto-solve** — copy text from any image using the built-in Windows Media OCR engine (no bundled model, so the binary stays small). Copy arithmetic and SnipClip evaluates it, puts the answer on your clipboard, and saves the line in the vault. `2×3÷4` becomes `6`.
+- **Customizable sidebar + keyboard shortcuts** — reorder or hide library tabs (All, Text, Images, Screenshots, Videos, Links, Pinned) in Settings. `1`-`7` switch tabs, `↑↓` move, `Enter` copy, `P` pin, `Delete` remove.
+- **Password-protected vault + backup** — lock the vault with a password and it's encrypted at rest with AES-256-GCM. Lose the password and it's gone — there is no recovery. Export the vault to a file, or restore one (applies on next launch).
 - **Tray-first** — global shortcuts, launch at login, signed updates, custom themes.
 
 <p align="center">
@@ -73,7 +89,11 @@ Inside the vault: **`↑↓`** navigate · **`Enter`** copy · **`P`** pin · **
 
 ## Technical architecture
 
-SnipClip is not a thin React wrapper. The UI is a small WebView; **capture, clipboard, encoding, OCR, and storage run in Rust**.
+SnipClip is not a thin React wrapper. The UI is a small WebView; **capture, clipboard, encoding, OCR, and storage run in Rust**. The React frontend only paints and invokes commands.
+
+The biggest decision is **Tauri 2 + Rust instead of Electron**. Electron ships a full Chromium and a Node runtime, so a clipboard manager built on it ends up hundreds of MB of RAM resident. SnipClip uses the OS WebView (WebView2 on Windows, WebKit on macOS/Linux) and does the heavy lifting in-process Rust, so the tray stays small and the capture threads are short-lived. The tradeoff is platform work — GDI, WASAPI, and the Windows Media OCR API are Windows-only — but that's where the users are, and the Rust side is already cross-platform for the vault and the UI.
+
+The second decision is **local SQLite, no cloud**. Win+V syncs your clipboard to your Microsoft account. SnipClip keeps yours in a local WAL SQLite database under your OS app-data directory, with FTS5 for search. Nothing leaves the machine — no cloud, no account, no telemetry.
 
 ### Why Tauri + Rust (not Electron)
 
@@ -84,7 +104,7 @@ SnipClip is not a thin React wrapper. The UI is a small WebView; **capture, clip
 | IPC | JSON over bridges | Generated Tauri commands (typed, low overhead) |
 | Typical footprint | Hundreds of MB RAM | Small tray resident + short-lived capture threads |
 
-System work (GDI blit, WASAPI, FFmpeg stdin, SQLite) never crosses a Node process boundary. The React frontend only paints and invokes commands.
+System work (GDI blit, WASAPI, FFmpeg stdin, SQLite) never crosses a Node process boundary.
 
 ### Architecture diagram
 
@@ -138,7 +158,7 @@ SnipClip does **not** grab the entire monitor and crop. On Windows, `RegionCaptu
 
 **DWM / self-occlusion:** before a still capture, overlays are hidden and parked off-screen, then the pipeline waits ~150 ms so the Desktop Window Manager flushes the compositor buffer. That stops the translucent snip UI from baking into the shot.
 
-**Multi-monitor:** `available_monitors()` drives **one overlay window per display**, positioned at each monitor’s physical origin. Selection math uses `outerPosition` / scale factor (and the emitted desktop origin) so secondary screens with negative coordinates still crop correctly. Capture stitches or GDI-blits in absolute desktop space.
+**Multi-monitor:** `available_monitors()` drives **one overlay window per display**, positioned at each monitor's physical origin. Selection math uses `outerPosition` / scale factor (and the emitted desktop origin) so secondary screens with negative coordinates still crop correctly. Capture stitches or GDI-blits in absolute desktop space.
 
 ### FFmpeg rawvideo pipeline
 
@@ -159,7 +179,7 @@ Post-record, the in-app editor runs trim/crop/mute/GIF via `process_video_clip`.
 History lives in a local WAL SQLite database under the OS app-data directory.
 
 - Row indexes on `created_at`, `is_pinned`, and `content_type` for vault browsing.
-- **`items_fts` (FTS5)** indexes text/link bodies (and recording previews) for the `Alt+C` palette — prefix queries (`term*`) with a LIKE fallback for punctuation-only input.
+- `items_fts` **(FTS5)** indexes text/link bodies (and recording previews) for the `Alt+C` palette — prefix queries (`term`*) with a LIKE fallback for punctuation-only input.
 - List queries omit heavy image blobs; previews carry small thumbnails.
 - Insert path trims unpinned history and keeps the FTS table in sync.
 

@@ -5,6 +5,7 @@ use crate::hotkeys::{self, HotkeyState};
 use crate::screenshot_popup::{self, ScreenshotPopupPayload};
 use crate::snip::{self, CaptureResult};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -177,7 +178,7 @@ pub struct RegionOcrResult {
     pub line_count: usize,
 }
 
-/// Capture a region, run Windows Media OCR (via win_ocr), copy text, close overlays.
+/// Capture a region, run Windows Media OCR, copy text, close overlays.
 #[tauri::command]
 pub async fn capture_region_ocr(
     app: AppHandle,
@@ -214,10 +215,12 @@ pub async fn capture_region_ocr(
 
     clipboard::write_text_to_clipboard(&trimmed)?;
     let line_count = trimmed.lines().filter(|l| !l.trim().is_empty()).count();
+    let char_count = trimmed.chars().count();
     let _ = app.emit(
         "ocr-extracted",
         serde_json::json!({
             "lineCount": line_count,
+            "charCount": char_count,
             "preview": trimmed.chars().take(80).collect::<String>(),
         }),
     );
@@ -565,7 +568,14 @@ pub fn update_settings(
     _hotkeys: State<'_, Arc<HotkeyState>>,
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
-    hotkeys::apply_hotkeys(&app, &settings)?;
+    if let Err(e) = hotkeys::apply_hotkeys(&app, &settings) {
+        // Tell the UI which hotkey collided with a system shortcut (Win+V, Snipping Tool, Game Bar…)
+        let _ = app.emit(
+            "hotkey-conflict",
+            &serde_json::json!({ "message": e }),
+        );
+        return Err(e);
+    }
     let mut settings = settings;
     if let Some(ref bg) = settings.theme_background_image {
         if bg.starts_with("data:image/") {
@@ -636,6 +646,54 @@ pub fn get_running_apps() -> Vec<String> {
     apps::list_running_apps()
 }
 
+/// Per-category counts for the sidebar (all / text / images / screenshots / videos / links / pinned).
+#[tauri::command]
+pub fn category_counts(db: State<'_, Arc<Database>>) -> Result<Vec<(String, i64)>, String> {
+    db.category_counts()
+}
+
+/// Copy the SQLite vault (db + wal + shm, or db.enc if locked) to a user-chosen path for backup.
+#[tauri::command]
+pub fn export_vault(app: AppHandle, db: State<'_, Arc<Database>>, path: String) -> Result<(), String> {
+    use std::fs;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let enc_path = app_data.join("snipclip.db.enc");
+    let locked = enc_path.exists();
+    let _stem = if locked { enc_path } else { app_data.join("snipclip.db") };
+    for suffix in ["", "-wal", "-shm"] {
+        let src = format!("snipclip.db{}{}", if locked { ".enc" } else { "" }, suffix);
+        let src_path = app_data.join(&src);
+        if src_path.exists() {
+            let dest = Path::new(&path).join(format!("snipclip.db{}{}", if locked { ".enc" } else { "" }, suffix));
+            fs::copy(&src_path, &dest)
+                .map_err(|e| format!("failed to copy {src}: {e}"))?;
+        }
+    }
+    let _ = db; // silence unused state warning
+    Ok(())
+}
+
+/// Stage a chosen SQLite vault file (plain or .db.enc) for restore. Applied on next restart.
+#[tauri::command]
+pub fn import_vault(app: AppHandle, path: String) -> Result<(), String> {
+    use std::fs;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let dest = app_data.join("snipclip.db.import");
+    fs::copy(&path, &dest)
+        .map_err(|e| format!("failed to stage vault import: {e}"))?;
+    let _ = app.emit(
+        "vault-imported",
+        &serde_json::json!({ "path": dest.to_string_lossy() }),
+    );
+    Ok(())
+}
+
 /// OCR text from a vault image and copy it to the system clipboard.
 #[tauri::command]
 pub async fn copy_text_from_image(
@@ -659,6 +717,16 @@ pub async fn copy_text_from_image(
     Ok(text)
 }
 
+/// Native Windows.Media.Ocr from an on-disk image path.
+#[tauri::command]
+pub async fn extract_text_from_image(image_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ocr::extract_text_from_image_path(&image_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn run_ocr(data_url: String) -> Result<String, String> {
     let bytes = decode_image_data_url(&data_url)?;
@@ -674,6 +742,104 @@ pub fn copy_text(text: String) -> Result<(), String> {
         return Err("text is empty".into());
     }
     clipboard::write_text_to_clipboard(trimmed)
+}
+
+/// Set or change the vault password. Re-encrypts the vault with the new password.
+/// Empty password removes the lock (decrypts and clears the hash).
+#[tauri::command]
+pub fn set_vault_password(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    password: String,
+) -> Result<(), String> {
+    use crate::vault;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let db_path = app_data.join("snipclip.db");
+
+    let password_empty = password.is_empty();
+
+    // If the vault is already encrypted, decrypt it first so we can re-encrypt with the new password.
+    if vault::is_vault_locked(&app_data) {
+        let enc_path = db_path.with_extension("db.enc");
+        let salt = db
+            .get_settings()?
+            .vault_password_salt
+            .ok_or_else(|| "vault is locked but no salt is stored".to_string())?;
+        let pw = if password_empty {
+            return Err("current password is required to change it".into());
+        } else {
+            password.clone()
+        };
+        vault::decrypt_vault(&enc_path, &pw, &salt)?;
+    }
+
+    let mut settings = db.get_settings()?;
+    if password_empty {
+        // Removing the lock: clear the hash + salt so unlock is no longer prompted.
+        settings.vault_password_hash = None;
+        settings.vault_password_salt = None;
+    } else {
+        let salt = settings
+            .vault_password_salt
+            .map(|s| s.to_vec())
+            .unwrap_or_else(|| vault::generate_salt().to_vec());
+        let hash = vault::hash_password(&password.clone(), &salt);
+        settings.vault_password_hash = Some(hash.to_vec());
+        settings.vault_password_salt = Some(salt.to_vec());
+        // Encrypt the plain DB in place.
+        vault::encrypt_vault(&db_path, &password.clone(), &salt)?;
+    }
+    db.save_settings(&settings)?;
+    let _ = app.emit(
+        "vault-lock-changed",
+        &serde_json::json!({ "locked": password.len() > 0 }),
+    );
+    Ok(())
+}
+
+/// Decrypt the vault on launch. Called from the frontend after the user enters a password.
+#[tauri::command]
+pub fn unlock_vault(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    password: String,
+) -> Result<(), String> {
+    use crate::vault;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let enc_path = app_data.join("snipclip.db.enc");
+    if !enc_path.exists() {
+        return Err("vault is not locked".into());
+    }
+    let settings = db.get_settings()?;
+    let salt = settings
+        .vault_password_salt
+        .ok_or_else(|| "vault is locked but no salt is stored".to_string())?;
+    let hash = settings
+        .vault_password_hash
+        .ok_or_else(|| "vault is locked but no hash is stored".to_string())?;
+    if !vault::verify_password(&password, &hash, &salt) {
+        return Err("incorrect password".into());
+    }
+    vault::decrypt_vault(&enc_path, &password, &salt)?;
+    let _ = app.emit("vault-lock-changed", &serde_json::json!({ "locked": false }));
+    Ok(())
+}
+
+/// True when `snipclip.db.enc` exists — the vault is locked.
+#[tauri::command]
+pub fn is_vault_locked(app: AppHandle) -> bool {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())
+        .unwrap_or_default();
+    crate::vault::is_vault_locked(&app_data)
 }
 
 #[derive(serde::Serialize)]

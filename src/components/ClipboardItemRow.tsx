@@ -13,6 +13,7 @@ import {
   Check,
   X,
   Film,
+  Sigma,
 } from "lucide-react";
 import type { ClipboardItem } from "../lib/types";
 import {
@@ -38,6 +39,7 @@ function TypeIcon({ type, isCode }: { type: string; isCode?: boolean }) {
   if (type === "image" || type === "screenshot") return <ImageIcon size={14} />;
   if (type === "video" || type === "gif") return <Film size={14} />;
   if (type === "link") return <Link2 size={14} />;
+  if (type === "math") return <Sigma size={14} />;
   return <Type size={14} />;
 }
 
@@ -89,9 +91,10 @@ export function ClipboardItemRow({
   const isCode = lang !== "plain";
   const isImage = item.contentType === "image" || item.contentType === "screenshot";
   const isVideo = item.contentType === "video" || item.contentType === "gif";
-  const isLink = !isImage && !isVideo && !isCode && isLinkItem(item.contentType, textBody);
+  const isMath = item.contentType === "math";
+  const isLink = !isImage && !isVideo && !isMath && !isCode && isLinkItem(item.contentType, textBody);
   const href = isLink ? linkHrefFromText(textBody) : null;
-  const canEdit = !isImage && !isVideo && !isCode;
+  const canEdit = !isImage && !isVideo && !isMath && !isCode;
 
   useEffect(() => {
     if (!editing) setDraft(item.content || item.preview || "");
@@ -161,6 +164,10 @@ export function ClipboardItemRow({
           <p className="truncate text-xs font-medium text-fg-secondary">
             {item.preview || (item.contentType === "gif" ? "GIF recording" : "Video recording")}
           </p>
+        ) : isMath ? (
+          <p className="truncate text-xs font-medium text-fg-secondary">
+            {item.content || item.preview || "Solved math"}
+          </p>
         ) : isCode ? (
           <CodePreview content={textBody} />
         ) : editing ? (
@@ -206,7 +213,9 @@ export function ClipboardItemRow({
               ? languageLabel(lang)
               : item.contentType === "screenshot"
                 ? "screenshot"
-                : item.contentType}
+                : item.contentType === "math"
+                  ? "math"
+                  : item.contentType}
           </span>
           <span className="text-[10px] text-fg-faint">•</span>
           <span className="font-mono text-[10px] text-fg-faint">{formatTime(item.createdAt)}</span>
@@ -296,7 +305,7 @@ export function ClipboardItemRow({
             {isImage && ocrAvailable && (
               <button
                 type="button"
-                title="Copy text from image (OCR)"
+                title="Copy Text (OCR)"
                 className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
                 onClick={(e) => {
                   e.stopPropagation();

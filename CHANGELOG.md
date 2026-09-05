@@ -2,6 +2,21 @@
 
 All notable changes to SnipClip are documented here.
 
+## [Unreleased]
+
+### Vault + library polish
+
+- **Native Windows OCR:** `extract_text_from_image` command runs Windows Media OCR on any image path via `BitmapDecoder` + `OcrEngine` (no `win_ocr` crate, no bundled models).
+- **Math auto-solve:** Copy arithmetic and `meval` evaluates it, inserts a `math` item, and swaps the clipboard to the answer.
+- **Videos tab:** New library tab for `video`/`gif` items; backend `sidebar_tabs` setting + `normalize_sidebar_tabs` for order/visibility.
+- **Customizable sidebar:** Reorder or hide library tabs in Settings → Appearance.
+- **Per-category counts:** `category_counts` command powers count badges next to each sidebar tab.
+- **Keyboard shortcuts:** `1`-`7` switch library tabs inside the vault.
+- **Password-protected vault:** AES-256-GCM file-level encryption with Argon2id key derivation; lock/unlock commands; password prompt on launch when `snipclip.db.enc` exists.
+- **Vault backup:** `export_vault` / `import_vault` commands; restore applies on next launch.
+- **Hotkey conflict toast:** `hotkey-conflict` event surfaces a toast when a shortcut is taken by another app.
+- **Code detection:** `detectLanguage` no longer mis-labels compiler output as SQL.
+
 ## [1.4.0] — 2026-09-04
 
 ### Capture studio

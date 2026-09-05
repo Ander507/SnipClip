@@ -76,6 +76,15 @@ pub struct AppSettings {
     /// Milliseconds to wait before snip overlay (e.g. 3000).
     #[serde(default = "default_snip_delay_ms")]
     pub snip_delay_ms: u32,
+    /// Ordered library tab ids that are visible in the sidebar.
+    #[serde(default = "default_sidebar_tabs")]
+    pub sidebar_tabs: Vec<String>,
+    /// Argon2id hash of the vault password (never the password itself). Empty = no lock.
+    #[serde(default)]
+    pub vault_password_hash: Option<Vec<u8>>,
+    /// 16-byte salt for the vault password hash. Empty = no lock.
+    #[serde(default)]
+    pub vault_password_salt: Option<Vec<u8>>,
 }
 
 fn default_snip_delay_ms() -> u32 {
@@ -84,6 +93,52 @@ fn default_snip_delay_ms() -> u32 {
 
 fn default_hotkey_record() -> String {
     DEFAULT_HOTKEY_RECORD.to_string()
+}
+
+pub fn default_sidebar_tabs() -> Vec<String> {
+    vec![
+        "all".into(),
+        "text".into(),
+        "images".into(),
+        "screenshots".into(),
+        "videos".into(),
+        "math".into(),
+        "links".into(),
+        "pinned".into(),
+    ]
+}
+
+const SIDEBAR_TAB_IDS: &[&str] = &[
+    "all",
+    "text",
+    "images",
+    "screenshots",
+    "videos",
+    "math",
+    "links",
+    "pinned",
+];
+
+pub fn normalize_sidebar_tabs(tabs: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in tabs {
+        let id = raw.trim().to_ascii_lowercase();
+        if !SIDEBAR_TAB_IDS.contains(&id.as_str()) {
+            continue;
+        }
+        if out.iter().any(|e| e == &id) {
+            continue;
+        }
+        out.push(id);
+    }
+    if out.is_empty() {
+        return default_sidebar_tabs();
+    }
+    // Always keep "all" available — prepend if user hid everything else oddly
+    if !out.iter().any(|t| t == "all") {
+        out.insert(0, "all".into());
+    }
+    out
 }
 
 impl Default for AppSettings {
@@ -106,6 +161,9 @@ impl Default for AppSettings {
             ignore_list: Vec::new(),
             snip_delay_enabled: false,
             snip_delay_ms: default_snip_delay_ms(),
+            sidebar_tabs: default_sidebar_tabs(),
+            vault_password_hash: None,
+            vault_password_salt: None,
         }
     }
 }
@@ -328,6 +386,11 @@ impl Database {
         if self.get_setting("ignore_list")?.is_none() {
             self.set_setting("ignore_list", "[]")?;
         }
+        if self.get_setting("sidebar_tabs")?.is_none() {
+            let tabs_json =
+                serde_json::to_string(&default_sidebar_tabs()).unwrap_or_else(|_| "[]".into());
+            self.set_setting("sidebar_tabs", &tabs_json)?;
+        }
         Ok(())
     }
 
@@ -416,6 +479,21 @@ impl Database {
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or_else(default_snip_delay_ms)
             .clamp(500, 30_000);
+        let sidebar_tabs = self
+            .get_setting("sidebar_tabs")?
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+            .map(normalize_sidebar_tabs)
+            .unwrap_or_else(default_sidebar_tabs);
+        let vault_password_hash = self
+            .get_setting("vault_password_hash")?
+            .and_then(|raw| {
+                serde_json::from_str::<Vec<u8>>(&raw).ok()
+            });
+        let vault_password_salt = self
+            .get_setting("vault_password_salt")?
+            .and_then(|raw| {
+                serde_json::from_str::<Vec<u8>>(&raw).ok()
+            });
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -440,6 +518,9 @@ impl Database {
             ignore_list,
             snip_delay_enabled,
             snip_delay_ms,
+            sidebar_tabs,
+            vault_password_hash,
+            vault_password_salt,
         })
     }
 
@@ -514,6 +595,23 @@ impl Database {
             "snip_delay_ms",
             &settings.snip_delay_ms.clamp(500, 30_000).to_string(),
         )?;
+        let tabs = normalize_sidebar_tabs(settings.sidebar_tabs.clone());
+        let tabs_json = serde_json::to_string(&tabs).unwrap_or_else(|_| "[]".to_string());
+        self.set_setting("sidebar_tabs", &tabs_json)?;
+        if let Some(hash) = &settings.vault_password_hash {
+            let hash_json =
+                serde_json::to_string(hash).unwrap_or_else(|_| "[]".to_string());
+            self.set_setting("vault_password_hash", &hash_json)?;
+        } else {
+            self.set_setting("vault_password_hash", "")?;
+        }
+        if let Some(salt) = &settings.vault_password_salt {
+            let salt_json =
+                serde_json::to_string(salt).unwrap_or_else(|_| "[]".to_string());
+            self.set_setting("vault_password_salt", &salt_json)?;
+        } else {
+            self.set_setting("vault_password_salt", "")?;
+        }
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }
@@ -706,6 +804,9 @@ impl Database {
                     sql.push_str(" AND content_type = ?");
                     binds.push(Box::new("screenshot".to_string()));
                 }
+                "videos" => {
+                    sql.push_str(" AND content_type IN ('video', 'gif')");
+                }
                 "links" => {
                     sql.push_str(" AND content_type = ?");
                     binds.push(Box::new("link".to_string()));
@@ -797,6 +898,44 @@ impl Database {
 
         // Fallback for punctuation-only queries or empty FTS hits
         self.list(None, Some(trimmed), 10)
+    }
+
+    /// Per-category counts for the sidebar — one row per visible tab.
+    pub fn category_counts(&self) -> Result<Vec<(String, i64)>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT content_type, COUNT(*) FROM items GROUP BY content_type",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                let ctype: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((ctype, count))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out: Vec<(String, i64)> = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| e.to_string())?);
+        }
+        let pinned = conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE is_pinned = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| e.to_string())?;
+        out.push(("pinned".into(), pinned));
+        let total = conn
+            .query_row(
+                "SELECT COUNT(*) FROM items",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| e.to_string())?;
+        out.push(("all".into(), total));
+        Ok(out)
     }
 
     pub fn get(&self, id: i64) -> Result<Option<ClipboardItem>, String> {

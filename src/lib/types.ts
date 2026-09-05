@@ -1,6 +1,13 @@
 export type ContentType = "text" | "image" | "link" | "screenshot";
 
-export type Category = "all" | "text" | "images" | "screenshots" | "links" | "pinned";
+export type Category =
+  | "all"
+  | "text"
+  | "images"
+  | "screenshots"
+  | "videos"
+  | "links"
+  | "pinned";
 
 export interface ClipboardItem {
   id: number;
@@ -49,6 +56,12 @@ export interface AppSettings {
   snipDelayEnabled: boolean;
   /** Milliseconds to wait before snip overlay (default 3000). */
   snipDelayMs: number;
+  /** Ordered library tab ids that are visible in the sidebar. */
+  sidebarTabs: string[];
+  /** Argon2id hash of the vault password (never the password itself). null = no lock. */
+  vaultPasswordHash: number[] | null;
+  /** 16-byte salt for the vault password hash. null = no lock. */
+  vaultPasswordSalt: number[] | null;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -69,6 +82,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ignoreList: [],
   snipDelayEnabled: false,
   snipDelayMs: 3000,
+  sidebarTabs: ["all", "text", "images", "screenshots", "videos", "links", "pinned"],
+  vaultPasswordHash: null,
+  vaultPasswordSalt: null,
 };
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";

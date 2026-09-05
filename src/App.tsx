@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { SearchBar } from "./components/SearchBar";
@@ -23,9 +23,11 @@ import {
   getClipboardPaused,
   toggleClipboardPaused,
   copyTextFromImage,
-  isOcrAvailable,
+  isVaultLocked,
+  unlockVault,
   showMainWindow,
   openVideoEditor,
+  getCategoryCounts,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
@@ -53,7 +55,11 @@ function App() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [clipboardPaused, setClipboardPaused] = useState(false);
-  const [ocrAvailable, setOcrAvailable] = useState(false);
+  const [vaultLocked, setVaultLocked] = useState(false);
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [vaultUnlocking, setVaultUnlocking] = useState(false);
+  const [vaultError, setVaultError] = useState<string | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const categoryRef = useRef(category);
   categoryRef.current = category;
   const debouncedQueryRef = useRef(debouncedQuery);
@@ -105,7 +111,15 @@ function App() {
       })
       .catch(console.error);
     void getClipboardPaused().then(setClipboardPaused).catch(console.error);
-    void isOcrAvailable().then(setOcrAvailable).catch(() => setOcrAvailable(false));
+    void getCategoryCounts().then(setCounts).catch(console.error);
+    void isVaultLocked()
+      .then((locked) => {
+        if (locked) {
+          setVaultLocked(true);
+          void emit("vault-locked");
+        }
+      })
+      .catch(console.error);
   }, []);
 
   const startSnip = useCallback(async () => {
@@ -160,18 +174,42 @@ function App() {
       setClipboardPaused(Boolean(event.payload));
     }).then((u) => unsubs.push(u));
 
-    void listen<{ lineCount?: number; preview?: string }>("ocr-extracted", (event) => {
+    void listen<{ lineCount?: number; preview?: string; charCount?: number }>("ocr-extracted", (event) => {
       const lines = event.payload?.lineCount ?? 0;
+      const chars = event.payload?.charCount;
       const preview = event.payload?.preview?.trim();
       if (lines > 0) {
+        const countBit =
+          chars != null
+            ? `${lines} line${lines === 1 ? "" : "s"} · ${chars} chars`
+            : `${lines} line${lines === 1 ? "" : "s"}`;
         setStatus(
-          preview
-            ? `Extracted ${lines} line${lines === 1 ? "" : "s"}: ${preview}`
-            : `Extracted ${lines} line${lines === 1 ? "" : "s"} of text`,
+          preview ? `OCR copied · ${countBit}: ${preview}` : `OCR copied · ${countBit}`,
           2800
         );
       } else {
         setStatus("OCR text copied", 2000);
+      }
+    }).then((u) => unsubs.push(u));
+
+    void listen<{ message?: string }>("hotkey-conflict", (event) => {
+      const msg = event.payload?.message?.trim() || "A hotkey is already taken by another app";
+      setStatus(`Hotkey conflict: ${msg}`, 6000);
+    }).then((u) => unsubs.push(u));
+
+    void listen<{ path?: string }>("vault-imported", (event) => {
+      const p = event.payload?.path ? ` from ${event.payload.path}` : "";
+      setStatus(`Vault staged for restore${p}. Restart SnipClip to apply.`, 6000);
+    }).then((u) => unsubs.push(u));
+
+    void listen<{ locked?: boolean }>("vault-lock-changed", (event) => {
+      const locked = Boolean(event.payload?.locked);
+      setVaultLocked(locked);
+      setVaultPassword("");
+      setVaultError(null);
+      if (!locked) {
+        setVaultUnlocking(false);
+        void refresh();
       }
     }).then((u) => unsubs.push(u));
 
@@ -213,10 +251,24 @@ function App() {
   async function handleExtractText(id: number) {
     try {
       const text = await copyTextFromImage(id);
-      const preview = text.length > 48 ? `${text.slice(0, 48)}…` : text;
-      setStatus(`Copied text: ${preview}`, 2200);
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0).length;
+      const chars = text.length;
+      setStatus(`OCR copied · ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars`, 2200);
     } catch (err) {
       setStatus(String(err), 2000);
+    }
+  }
+
+  async function handleUnlockVault() {
+    setVaultUnlocking(true);
+    setVaultError(null);
+    try {
+      await unlockVault(vaultPassword);
+      // vault-lock-changed listener clears vaultLocked and refreshes
+    } catch (err) {
+      setVaultError(String(err));
+    } finally {
+      setVaultUnlocking(false);
     }
   }
 
@@ -418,11 +470,27 @@ function App() {
         e.preventDefault();
         void handlePin(selectedIdRef.current);
       }
+
+      // Digit keys 1-7 jump to the Nth visible library tab (1=All, 2=Text, …, 7=Pinned)
+      if (!inInput && /^[1-7]$/.test(e.key)) {
+        const n = Number(e.key);
+        const visibleTabs = (
+          settings.sidebarTabs.length > 0
+            ? settings.sidebarTabs
+            : ["all", "text", "images", "screenshots", "videos", "links", "pinned"]
+        ).filter((id) => id === "all" || (counts[id] ?? 0) > 0);
+        const target = visibleTabs[n - 1];
+        if (target) {
+          e.preventDefault();
+          setCategory(target as Category);
+          setView("vault");
+        }
+      }
     }
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, capture, view]);
+  }, [items, capture, view, counts, settings.sidebarTabs]);
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-app text-fg">
@@ -445,6 +513,7 @@ function App() {
           onSettings={() => setView("settings")}
           settingsOpen={view === "settings"}
           count={items.length}
+          counts={counts}
           snipHotkeyLabel={formatHotkeyShort(settings.hotkeySnip)}
           snipDelayEnabled={settings.snipDelayEnabled}
         />
@@ -464,7 +533,7 @@ function App() {
                 <p className="mt-2 text-[11px] text-fg-faint">
                   ↑↓ navigate · Enter copy ·{" "}
                   {formatHotkeyShort(settings.hotkeyClipboard)} toggle
-                  {clipboardPaused ? " · listening paused" : ""}
+                  {clipboardPaused ? " · listening paused" : ""} · 1-7 switch tab
                 </p>
               </div>
               <ClipboardList
@@ -472,7 +541,6 @@ function App() {
                 selectedId={selectedId}
                 hotkeySnip={formatHotkeyShort(settings.hotkeySnip)}
                 hotkeyPalette="Alt+C"
-                ocrAvailable={ocrAvailable}
                 onSelect={setSelectedId}
                 onCopy={(id) => void handleCopy(id)}
                 onExtractText={(id) => void handleExtractText(id)}
@@ -496,7 +564,6 @@ function App() {
       <ImageViewerModal
         imageSrc={previewSrc}
         loading={previewLoading}
-        ocrAvailable={ocrAvailable}
         onClose={closeImagePreview}
         onCopy={async () => {
           if (previewId != null) await handleCopy(previewId);
@@ -513,6 +580,56 @@ function App() {
           onClose={() => setCapture(null)}
           onSaved={() => void refresh()}
         />
+      )}
+
+      {vaultLocked && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-6 select-none">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleUnlockVault();
+            }}
+            className="w-full max-w-sm rounded-xl border border-line-strong bg-raised p-5 shadow-2xl"
+          >
+            <h2 className="text-[14px] font-semibold text-fg">Vault locked</h2>
+            <p className="mt-1 text-[12px] text-fg-muted">
+              Enter your password to decrypt the vault.
+            </p>
+            <input
+              type="password"
+              autoFocus
+              autoComplete="current-password"
+              value={vaultPassword}
+              onChange={(e) => setVaultPassword(e.target.value)}
+              disabled={vaultUnlocking}
+              placeholder="Password"
+              className="mt-3 w-full rounded-md border border-line bg-inset px-3 py-2 text-[13px] text-fg outline-none placeholder:text-fg-faint focus:border-accent"
+            />
+            {vaultError && (
+              <p className="mt-2 text-[12px] text-danger">{vaultError}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setVaultLocked(false);
+                  setVaultPassword("");
+                  setVaultError(null);
+                }}
+                className="rounded-md px-3 py-1.5 text-[12px] text-fg-muted hover:bg-hover hover:text-fg"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={vaultUnlocking || !vaultPassword}
+                className="rounded-md bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-accent-fg hover:brightness-110 disabled:opacity-50"
+              >
+                {vaultUnlocking ? "Unlocking…" : "Unlock"}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );

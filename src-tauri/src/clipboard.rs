@@ -255,9 +255,24 @@ fn process_clipboard_snapshot(
         if Some(&text) != last_text.as_ref() {
             *last_text = Some(text.clone());
             if !skip_insert {
-                let (ctype, preview) = classify_text(&text);
-                if let Ok(item) = db.insert(ctype, &text, &preview) {
-                    let _ = app.emit("clipboard-item", &item.for_event());
+                // solving copied arithmetic and swapping the clipboard to the answer
+                if let Some((expr, result)) = crate::math::try_solve(&text) {
+                    let content = format!("{expr} = {result}");
+                    let preview: String = content.chars().take(120).collect();
+                    if let Ok(item) = db.insert("math", &content, &preview) {
+                        let _ = app.emit("clipboard-item", &item.for_event());
+                        let _ = app.emit(
+                            "math-solved",
+                            serde_json::json!({ "expression": expr, "result": result }),
+                        );
+                        let _ = write_text_to_clipboard(&result);
+                        *last_text = Some(result);
+                    }
+                } else {
+                    let (ctype, preview) = classify_text(&text);
+                    if let Ok(item) = db.insert(ctype, &text, &preview) {
+                        let _ = app.emit("clipboard-item", &item.for_event());
+                    }
                 }
             }
         }

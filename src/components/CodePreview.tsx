@@ -1,5 +1,6 @@
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
 import { prism } from "react-syntax-highlighter/dist/esm/styles/prism";
+import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
 import csharp from "react-syntax-highlighter/dist/esm/languages/prism/csharp";
 import css from "react-syntax-highlighter/dist/esm/languages/prism/css";
 import go from "react-syntax-highlighter/dist/esm/languages/prism/go";
@@ -34,6 +35,7 @@ for (const language of [
   python,
   rust,
   sql,
+  bash,
 ]) {
   SyntaxHighlighter.registerLanguage(language.displayName, language);
 }

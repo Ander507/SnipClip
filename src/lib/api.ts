@@ -186,8 +186,42 @@ export function getRunningApps(): Promise<string[]> {
   return invoke("get_running_apps");
 }
 
+export function getCategoryCounts(): Promise<Record<string, number>> {
+  return invoke("category_counts").then((rows) => {
+    const out: Record<string, number> = {};
+    if (Array.isArray(rows)) {
+      for (const [k, v] of rows as [string, number][]) out[k] = v;
+    }
+    return out;
+  });
+}
+
+export async function exportVault(path: string): Promise<void> {
+  return invoke("export_vault", { path });
+}
+
+export async function importVault(path: string): Promise<void> {
+  return invoke("import_vault", { path });
+}
+
+export async function setVaultPassword(password: string): Promise<void> {
+  return invoke("set_vault_password", { password });
+}
+
+export async function unlockVault(password: string): Promise<void> {
+  return invoke("unlock_vault", { password });
+}
+
+export function isVaultLocked(): Promise<boolean> {
+  return invoke("is_vault_locked");
+}
+
 export function copyTextFromImage(id: number): Promise<string> {
   return invoke("copy_text_from_image", { id });
+}
+
+export function extractTextFromImage(imagePath: string): Promise<string> {
+  return invoke("extract_text_from_image", { imagePath });
 }
 
 export function isOcrAvailable(): Promise<boolean> {

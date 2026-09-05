@@ -4,6 +4,7 @@ mod command_palette;
 mod commands;
 mod db;
 mod hotkeys;
+mod math;
 mod ocr;
 mod recorder_bar;
 mod recording;
@@ -12,6 +13,7 @@ mod screenshot_popup;
 mod snip;
 mod system_audio;
 mod themes;
+mod vault;
 mod video_edit;
 mod video_editor_window;
 mod wayland;
@@ -22,7 +24,7 @@ use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -69,7 +71,14 @@ pub fn run() {
             commands::set_clipboard_paused,
             commands::toggle_clipboard_paused,
             commands::get_running_apps,
+            commands::category_counts,
+            commands::export_vault,
+            commands::import_vault,
+            commands::set_vault_password,
+            commands::unlock_vault,
+            commands::is_vault_locked,
             commands::copy_text_from_image,
+            commands::extract_text_from_image,
             commands::run_ocr,
             commands::copy_text,
             commands::is_ocr_available,
@@ -121,6 +130,16 @@ pub fn run() {
                 .expect("failed to resolve app data dir");
             let db_path = app_data.join("snipclip.db");
 
+            // Apply a staged vault import (from `import_vault`) before opening the DB.
+            // The staged file may be a plain `snipclip.db` or an encrypted `snipclip.db.enc`.
+            let staged = app_data.join("snipclip.db.import");
+            if staged.exists() {
+                let is_enc = staged.extension().map_or(false, |e| e == "db.enc");
+                let dest_name = if is_enc { "snipclip.db.enc" } else { "snipclip.db" };
+                let dest = app_data.join(dest_name);
+                let _ = std::fs::rename(&staged, &dest);
+            }
+
             // Lightweight open so commands have a handle; heavy cleanup runs below
             let database = match Database::open(db_path) {
                 Ok(db) => Arc::new(db),
@@ -145,6 +164,12 @@ pub fn run() {
                 // Plugin install + register_all off the blocking path so a hotkey failure cannot kill startup
                 if let Err(e) = hotkeys::bootstrap_nonblocking(app.handle(), &settings) {
                     eprintln!("hotkey plugin setup skipped: {e}");
+                    // Surface the conflict to the UI so users know why their hotkey is dead
+                    // instead of blaming SnipClip — usually Win+V, Snipping Tool, or Game Bar took it.
+                    let _ = app.emit(
+                        "hotkey-conflict",
+                        &serde_json::json!({ "message": e }),
+                    );
                 }
             }
 
