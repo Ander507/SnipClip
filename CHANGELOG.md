@@ -4,6 +4,12 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-09-05
+
+### Installer
+
+- **NSIS preinstall/uninstall:** force-close running `snipclip.exe` before overwrite so tray-locked updates no longer fail with “Error opening file for writing”.
+
 ## [1.5.1] — 2026-09-05
 
 ### Recording
