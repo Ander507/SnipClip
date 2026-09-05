@@ -21,7 +21,15 @@ import {
 } from "lucide-react";
 import type { AppSettings, ClearInterval, Category } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
-import { getSettings, updateSettings, getRunningApps, exportVault, importVault, setVaultPassword, isVaultLocked } from "../lib/api";
+import {
+  getSettings,
+  updateSettings,
+  getRunningApps,
+  exportVault,
+  importVault,
+  setVaultPassword as setVaultPasswordCmd,
+  isVaultLocked,
+} from "../lib/api";
 import { ACCENTS, applyTheme, type AccentColor, type ThemeMode } from "../lib/theme";
 import { ThemeEditor } from "./ThemeEditor";
 import { save, open } from "@tauri-apps/plugin-dialog";
@@ -266,7 +274,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
     setVaultBusy(true);
     setVaultMessage(null);
     try {
-      await setVaultPassword(vaultPassword);
+      await setVaultPasswordCmd(vaultPassword);
       setVaultLocked(true);
       setVaultPassword("");
       setSavedFlash(true);
@@ -287,7 +295,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
     setVaultBusy(true);
     setVaultMessage(null);
     try {
-      await setVaultPassword("");
+      await setVaultPasswordCmd("");
       setVaultLocked(false);
       setVaultPassword("");
       setSavedFlash(true);

@@ -4,6 +4,8 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-09-05
+
 ### Vault + library polish
 
 - **Native Windows OCR:** `extract_text_from_image` command runs Windows Media OCR on any image path via `BitmapDecoder` + `OcrEngine` (no `win_ocr` crate, no bundled models).
