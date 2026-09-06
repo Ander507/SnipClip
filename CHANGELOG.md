@@ -4,6 +4,12 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.5.4] — 2026-09-06
+
+### Capture
+
+- **Snip during/after record no longer sticks on REC:** clear frozen overlay state after handing off to the recorder bar, remount on each snip-ready, and allow Esc while the REC preview is up.
+
 ## [1.5.3] — 2026-09-06
 
 ### Vault + library

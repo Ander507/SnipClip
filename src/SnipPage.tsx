@@ -23,6 +23,7 @@ interface SnipReadyPayload {
  */
 export function SnipPage() {
   const [active, setActive] = useState(true);
+  const [session, setSession] = useState(0);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("snip");
   const [showControls, setShowControls] = useState(true);
   const [overlayOrigin, setOverlayOrigin] = useState<OverlayOrigin | null>(null);
@@ -55,6 +56,8 @@ export function SnipPage() {
       ) {
         setOverlayOrigin({ originX: payload.originX, originY: payload.originY });
       }
+      // Remount selector so a parked record handoff can't leave a stuck REC freeze
+      setSession((n) => n + 1);
       setActive(true);
     }).then((u) => {
       unlisten = u;
@@ -84,6 +87,7 @@ export function SnipPage() {
   return (
     <div className="h-full w-full bg-transparent">
       <SnipSelector
+        key={session}
         active={active}
         initialMode={overlayMode}
         showControls={showControls}

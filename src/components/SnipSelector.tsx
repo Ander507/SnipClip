@@ -90,37 +90,49 @@ export function SnipSelector({
   const [error, setError] = useState<string | null>(null);
   const originRef = useRef(overlayOrigin);
   originRef.current = overlayOrigin;
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  function resetInteraction() {
+    setDragging(false);
+    setStartX(0);
+    setStartY(0);
+    setCurrentX(0);
+    setCurrentY(0);
+    setArmed(false);
+    setFrozen(null);
+    setError(null);
+    void getCurrentWindow()
+      .setIgnoreCursorEvents(false)
+      .catch(() => undefined);
+  }
 
   useEffect(() => {
     if (active) {
+      // Fresh snip-ready can reopen a parked window without active ever going false —
+      // always clear leftover REC freeze from a prior record handoff.
+      resetInteraction();
       setMode(initialMode);
+    } else {
+      resetInteraction();
+      setMode("snip");
     }
   }, [active, initialMode]);
 
   useEffect(() => {
-    if (!active) {
-      setDragging(false);
-      setStartX(0);
-      setStartY(0);
-      setCurrentX(0);
-      setCurrentY(0);
-      setArmed(false);
-      setFrozen(null);
-      setError(null);
-      setMode("snip");
-      void getCurrentWindow()
-        .setIgnoreCursorEvents(false)
-        .catch(() => undefined);
-    }
-  }, [active]);
-
-  useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !armed && !frozen) onCancel();
+      // Esc must work while frozen (REC preview) so a failed handoff never traps the desktop
+      if (e.key === "Escape" && !armed) onCancel();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel, armed, frozen]);
+  }, [onCancel, armed]);
 
   function handleMouseDown(e: React.MouseEvent) {
     if (armed || frozen || e.button !== 0) return;
@@ -164,13 +176,21 @@ export function SnipSelector({
     const screenX = Math.round(originX + barX * dpr);
     const screenY = Math.round(originY + barY * dpr);
 
-    await showRecorderBar({
-      screenX,
-      screenY,
-      region: sanitizeRecordRegion({ physX, physY, physW, physH }),
-      format: "mp4" as RecordFormat,
-      fps: 0,
-    });
+    try {
+      await showRecorderBar({
+        screenX,
+        screenY,
+        region: sanitizeRecordRegion({ physX, physY, physW, physH }),
+        format: "mp4" as RecordFormat,
+        fps: 0,
+      });
+      // Recorder bar parks snippers; clear overlay session so a later snip isn't stuck on REC
+      if (mountedRef.current) onCancel();
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setFrozen(null);
+      setError(String(err));
+    }
   }
 
   async function handleMouseUp(e?: React.MouseEvent) {

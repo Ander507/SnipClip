@@ -1,6 +1,6 @@
 [package]
 name = "snipclip"
-version = "1.5.3"
+version = "1.5.4"
 description = "Clipboard vault, screenshots, screen recording, and OCR in one tray app"
 authors = ["Ander507"]
 edition = "2021"
