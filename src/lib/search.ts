@@ -24,7 +24,8 @@ export function itemMatchesCategory(
   category: string
 ): boolean {
   if (category === "all") return true;
-  if (category === "text") return item.contentType === "text";
+  if (category === "text")
+    return item.contentType === "text" || item.contentType === "translated";
   if (category === "images") return item.contentType === "image";
   if (category === "screenshots") return item.contentType === "screenshot";
   if (category === "videos")

@@ -11,6 +11,7 @@ import {
   Aperture,
   Timer,
   Film,
+  Calculator,
 } from "lucide-react";
 import type { Category } from "../lib/types";
 
@@ -20,13 +21,10 @@ const NAV: { id: Category; label: string; icon: typeof LayoutGrid }[] = [
   { id: "images", label: "Images", icon: ImageIcon },
   { id: "screenshots", label: "Screenshots", icon: Aperture },
   { id: "videos", label: "Videos", icon: Film },
+  { id: "math", label: "Math", icon: Calculator },
   { id: "links", label: "Links", icon: Link2 },
   { id: "pinned", label: "Pinned", icon: Pin },
 ];
-
-const TAB_LABELS: Record<string, string> = Object.fromEntries(
-  NAV.map((n) => [n.id, n.label])
-);
 
 interface Props {
   category: Category;
@@ -38,6 +36,8 @@ interface Props {
   settingsOpen: boolean;
   count: number;
   counts: Record<string, number>;
+  /** Ordered visible tab ids from settings. Empty → show all NAV tabs. */
+  sidebarTabs?: string[];
   snipHotkeyLabel: string;
   snipDelayEnabled: boolean;
 }
@@ -52,17 +52,26 @@ export function Sidebar({
   settingsOpen,
   count,
   counts,
+  sidebarTabs,
   snipHotkeyLabel,
   snipDelayEnabled,
 }: Props) {
-  const visibleTabs = NAV.filter((n) => counts[n.id] !== 0 || n.id === "all");
+  const order =
+    sidebarTabs && sidebarTabs.length > 0
+      ? sidebarTabs
+      : NAV.map((n) => n.id);
+
+  const tabs = order
+    .map((id) => NAV.find((n) => n.id === id))
+    .filter((n): n is (typeof NAV)[number] => Boolean(n));
+
   return (
     <aside className="flex w-52 shrink-0 flex-col justify-between border-r border-line bg-raised p-3">
       <nav className="flex flex-col gap-0.5">
         <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
           Library
         </p>
-        {visibleTabs.map(({ id, label, icon: Icon }) => {
+        {tabs.map(({ id, label, icon: Icon }) => {
           const active = !settingsOpen && category === id;
           const n = counts[id] ?? 0;
           return (
@@ -135,11 +144,11 @@ export function Sidebar({
         >
           <Trash2 size={15} />
           <span>Clear history</span>
+          {count > 0 && (
+            <span className="ml-auto text-[10px] text-fg-faint">{count}</span>
+          )}
         </button>
-        <p className="px-2.5 pt-2 text-[11px] text-fg-faint">{count} items</p>
       </div>
     </aside>
   );
 }
-
-export { TAB_LABELS };

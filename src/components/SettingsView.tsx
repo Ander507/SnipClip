@@ -28,10 +28,10 @@ import {
   exportVault,
   importVault,
   setVaultPassword as setVaultPasswordCmd,
-  isVaultLocked,
 } from "../lib/api";
 import { ACCENTS, applyTheme, type AccentColor, type ThemeMode } from "../lib/theme";
 import { ThemeEditor } from "./ThemeEditor";
+import { SelectDropdown } from "./SelectDropdown";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { checkForAppUpdate, formatUpdateError, installAppUpdate } from "../lib/updates";
@@ -50,6 +50,7 @@ const TAB_ORDER: { id: Category; label: string }[] = [
   { id: "images", label: "Images" },
   { id: "screenshots", label: "Screenshots" },
   { id: "videos", label: "Videos" },
+  { id: "math", label: "Math" },
   { id: "links", label: "Links" },
   { id: "pinned", label: "Pinned" },
 ];
@@ -129,7 +130,9 @@ function isDirty(a: AppSettings, b: AppSettings) {
     JSON.stringify(a.vaultPasswordHash ?? []) !==
       JSON.stringify(b.vaultPasswordHash ?? []) ||
     JSON.stringify(a.vaultPasswordSalt ?? []) !==
-      JSON.stringify(b.vaultPasswordSalt ?? [])
+      JSON.stringify(b.vaultPasswordSalt ?? []) ||
+    a.autoTranslateEnabled !== b.autoTranslateEnabled ||
+    a.autoTranslateTargetLang !== b.autoTranslateTargetLang
   );
 }
 
@@ -147,6 +150,8 @@ function normalizeSettings(s: AppSettings): AppSettings {
     sidebarTabs: s.sidebarTabs ?? DEFAULT_SETTINGS.sidebarTabs,
     vaultPasswordHash: s.vaultPasswordHash ?? null,
     vaultPasswordSalt: s.vaultPasswordSalt ?? null,
+    autoTranslateEnabled: s.autoTranslateEnabled ?? false,
+    autoTranslateTargetLang: s.autoTranslateTargetLang ?? "en",
     hotkeyRecord: s.hotkeyRecord ?? DEFAULT_SETTINGS.hotkeyRecord,
   };
 }
@@ -166,7 +171,6 @@ export function SettingsView({ onClose, onSaved }: Props) {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
-  const [vaultLocked, setVaultLocked] = useState(false);
   const [vaultPassword, setVaultPassword] = useState("");
   const [vaultBusy, setVaultBusy] = useState(false);
   const [vaultMessage, setVaultMessage] = useState<string | null>(null);
@@ -182,7 +186,6 @@ export function SettingsView({ onClose, onSaved }: Props) {
     });
     void getVersion().then(setCurrentVersion).catch(console.error);
     void refreshRunningApps();
-    void isVaultLocked().then(setVaultLocked).catch(console.error);
   }, []);
 
   async function refreshRunningApps() {
@@ -275,14 +278,19 @@ export function SettingsView({ onClose, onSaved }: Props) {
     setVaultMessage(null);
     try {
       await setVaultPasswordCmd(vaultPassword);
-      setVaultLocked(true);
       setVaultPassword("");
       setSavedFlash(true);
       setVaultMessage(
-        "Vault locked. Keep your password safe — there is no recovery."
+        "Password saved. The vault encrypts when you quit SnipClip — keep the password safe."
       );
+      // Refresh settings so vaultPasswordHash is visible to the rest of the UI
+      const next = await getSettings();
+      const normalized = normalizeSettings(next);
+      setSettings(normalized);
+      setDraft(normalized);
+      onSaved(normalized);
       setTimeout(() => setSavedFlash(false), 2000);
-      setTimeout(() => setVaultMessage(null), 5000);
+      setTimeout(() => setVaultMessage(null), 6000);
     } catch (err) {
       setVaultMessage(String(err));
     } finally {
@@ -296,16 +304,40 @@ export function SettingsView({ onClose, onSaved }: Props) {
     setVaultMessage(null);
     try {
       await setVaultPasswordCmd("");
-      setVaultLocked(false);
       setVaultPassword("");
       setSavedFlash(true);
-      setVaultMessage("Vault unlocked.");
+      setVaultMessage("Vault password removed.");
+      const next = await getSettings();
+      const normalized = normalizeSettings(next);
+      setSettings(normalized);
+      setDraft(normalized);
+      onSaved(normalized);
       setTimeout(() => setSavedFlash(false), 2000);
       setTimeout(() => setVaultMessage(null), 4000);
     } catch (err) {
       setVaultMessage(String(err));
     } finally {
       setVaultBusy(false);
+    }
+  }
+
+  async function applySidebarTabs(nextTabs: string[]) {
+    if (!draft) return;
+    // Always keep All — hiding it empties the library chrome
+    const tabs = nextTabs.includes("all") ? nextTabs : ["all", ...nextTabs];
+    const previous = draft;
+    const nextDraft = { ...draft, sidebarTabs: tabs };
+    setDraft(nextDraft);
+    setError(null);
+    try {
+      const saved = await updateSettings(nextDraft);
+      const normalized = normalizeSettings(saved);
+      setSettings(normalized);
+      setDraft(normalized);
+      onSaved(normalized);
+    } catch (err) {
+      setDraft(previous);
+      setError(String(err));
     }
   }
 
@@ -408,7 +440,8 @@ export function SettingsView({ onClose, onSaved }: Props) {
           <div>
             <h2 className="text-[14px] font-semibold text-fg">Settings</h2>
             <p className="text-[12px] text-fg-muted">
-              Appearance, clipboard ignore list, startup, hotkeys, and vault cleanup. Changes apply when you save.
+              Appearance, library tabs, ignore list, hotkeys, and vault password. Library tabs apply
+              instantly; other changes apply when you save.
             </p>
           </div>
         </div>
@@ -503,93 +536,104 @@ export function SettingsView({ onClose, onSaved }: Props) {
               <LayoutGrid size={11} /> Library tabs
             </h3>
             <p className="mt-1 text-[12px] text-fg-muted">
-              Reorder or hide the categories shown in the sidebar. "All" stays visible.
+              Reorder or hide categories in the sidebar. Changes apply immediately. "All" stays
+              visible.
             </p>
           </div>
           <div className="space-y-1 rounded-lg border border-line bg-raised px-4 py-3">
-            {TAB_ORDER.map((tab) => {
-              const enabled = draft.sidebarTabs.includes(tab.id);
-              const visibleIndex = draft.sidebarTabs.indexOf(tab.id);
-              const canMoveUp = visibleIndex > 0;
-              const canMoveDown = visibleIndex >= 0 && visibleIndex < draft.sidebarTabs.length - 1;
-              return (
-                <div key={tab.id} className="flex items-center gap-2 py-1">
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <button
-                      type="button"
-                      aria-label={`Toggle ${tab.label}`}
-                      title={enabled ? "Hide tab" : "Show tab"}
-                      onClick={() =>
-                        setDraft((prev) => {
-                          if (!prev) return prev;
-                          const tabs = prev.sidebarTabs.filter((t) => t !== tab.id);
-                          if (!enabled && !tabs.includes(tab.id)) {
-                            const ordered = TAB_ORDER.map((t) => t.id).filter((t) =>
-                              tabs.includes(t)
+            {(() => {
+              const enabledRows = draft.sidebarTabs
+                .map((id) => TAB_ORDER.find((t) => t.id === id))
+                .filter((t): t is (typeof TAB_ORDER)[number] => Boolean(t));
+              const hiddenRows = TAB_ORDER.filter((t) => !draft.sidebarTabs.includes(t.id));
+              const rows = [...enabledRows, ...hiddenRows];
+              return rows.map((tab) => {
+                const enabled = draft.sidebarTabs.includes(tab.id);
+                const visibleIndex = draft.sidebarTabs.indexOf(tab.id);
+                const canMoveUp = visibleIndex > 0;
+                const canMoveDown =
+                  visibleIndex >= 0 && visibleIndex < draft.sidebarTabs.length - 1;
+                const isAll = tab.id === "all";
+                return (
+                  <div key={tab.id} className="flex items-center gap-2 py-1">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <button
+                        type="button"
+                        aria-label={`Toggle ${tab.label}`}
+                        title={
+                          isAll
+                            ? "All stays visible"
+                            : enabled
+                              ? "Hide tab"
+                              : "Show tab"
+                        }
+                        disabled={isAll}
+                        onClick={() => {
+                          if (isAll) return;
+                          if (enabled) {
+                            void applySidebarTabs(
+                              draft.sidebarTabs.filter((t) => t !== tab.id)
                             );
-                            if (tab.id !== "all") ordered.push(tab.id);
-                            return { ...prev, sidebarTabs: ordered };
+                          } else {
+                            void applySidebarTabs([...draft.sidebarTabs, tab.id]);
                           }
-                          return { ...prev, sidebarTabs: tabs };
-                        })
-                      }
-                      className={clsx(
-                        "rounded p-1 transition",
-                        enabled ? "text-accent hover:bg-hover" : "text-fg-faint hover:text-fg"
-                      )}
-                    >
-                      {enabled ? <Eye size={13} /> : <EyeOff size={13} />}
-                    </button>
-                    <span
-                      className={clsx(
-                        "min-w-0 flex-1 text-[13px]",
-                        enabled ? "text-fg-secondary" : "text-fg-faint line-through"
-                      )}
-                    >
-                      {tab.label}
-                    </span>
-                    <div className="flex items-center gap-0.5">
-                      <button
-                        type="button"
-                        aria-label={`Move ${tab.label} up`}
-                        disabled={!canMoveUp}
-                        onClick={() =>
-                          setDraft((prev) => {
-                            if (!prev) return prev;
-                            const tabs = [...prev.sidebarTabs];
+                        }}
+                        className={clsx(
+                          "rounded p-1 transition",
+                          isAll
+                            ? "cursor-default text-accent opacity-60"
+                            : enabled
+                              ? "text-accent hover:bg-hover"
+                              : "text-fg-faint hover:text-fg"
+                        )}
+                      >
+                        {enabled ? <Eye size={13} /> : <EyeOff size={13} />}
+                      </button>
+                      <span
+                        className={clsx(
+                          "min-w-0 flex-1 text-[13px]",
+                          enabled ? "text-fg-secondary" : "text-fg-faint line-through"
+                        )}
+                      >
+                        {tab.label}
+                      </span>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          aria-label={`Move ${tab.label} up`}
+                          disabled={!canMoveUp}
+                          onClick={() => {
+                            const tabs = [...draft.sidebarTabs];
                             const i = visibleIndex;
-                            if (i < 0 || i >= tabs.length) return prev;
+                            if (i < 0 || i >= tabs.length) return;
                             [tabs[i], tabs[i - 1]] = [tabs[i - 1], tabs[i]];
-                            return { ...prev, sidebarTabs: tabs };
-                          })
-                        }
-                        className="rounded p-1 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-30"
-                      >
-                        <ArrowUp size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Move ${tab.label} down`}
-                        disabled={!canMoveDown}
-                        onClick={() =>
-                          setDraft((prev) => {
-                            if (!prev) return prev;
-                            const tabs = [...prev.sidebarTabs];
+                            void applySidebarTabs(tabs);
+                          }}
+                          className="rounded p-1 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-30"
+                        >
+                          <ArrowUp size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Move ${tab.label} down`}
+                          disabled={!canMoveDown}
+                          onClick={() => {
+                            const tabs = [...draft.sidebarTabs];
                             const i = visibleIndex;
-                            if (i < 0 || i >= tabs.length - 1) return prev;
+                            if (i < 0 || i >= tabs.length - 1) return;
                             [tabs[i], tabs[i + 1]] = [tabs[i + 1], tabs[i]];
-                            return { ...prev, sidebarTabs: tabs };
-                          })
-                        }
-                        className="rounded p-1 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-30"
-                      >
-                        <ArrowDown size={12} />
-                      </button>
+                            void applySidebarTabs(tabs);
+                          }}
+                          className="rounded p-1 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-30"
+                        >
+                          <ArrowDown size={12} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
         </section>
 
@@ -831,19 +875,74 @@ export function SettingsView({ onClose, onSaved }: Props) {
           {draft.snipDelayEnabled && (
             <div className="flex items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
               <span className="text-[13px] text-fg-secondary">Delay before snip</span>
-              <select
-                value={draft.snipDelayMs}
-                onChange={(e) =>
+              <SelectDropdown
+                aria-label="Delay before snip"
+                value={String(draft.snipDelayMs)}
+                options={[
+                  { value: "3000", label: "3 seconds" },
+                  { value: "5000", label: "5 seconds" },
+                  { value: "10000", label: "10 seconds" },
+                ]}
+                onChange={(v) =>
                   setDraft((prev) =>
-                    prev ? { ...prev, snipDelayMs: Number(e.target.value) } : prev
+                    prev ? { ...prev, snipDelayMs: Number(v) } : prev
                   )
                 }
-                className="rounded-md border border-line bg-inset px-2 py-1.5 text-[12px] text-fg-secondary outline-none"
-              >
-                <option value={3000}>3 seconds</option>
-                <option value={5000}>5 seconds</option>
-                <option value={10000}>10 seconds</option>
-              </select>
+              />
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+            Auto-translate
+          </h3>
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-[13px] text-fg-secondary">Translate copied text</span>
+              <span className="text-[11px] text-fg-muted">
+                Off by default. Uses an online translator (MyMemory). Skips links, code-like
+                text, and text already in the target language. Needs network.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.autoTranslateEnabled}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, autoTranslateEnabled: e.target.checked } : prev
+                )
+              }
+              className="h-4 w-4 cursor-pointer rounded"
+            />
+          </label>
+          {draft.autoTranslateEnabled && (
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+              <span className="text-[13px] text-fg-secondary">Target language</span>
+              <SelectDropdown
+                aria-label="Target language"
+                value={draft.autoTranslateTargetLang}
+                options={[
+                  { value: "en", label: "English" },
+                  { value: "da", label: "Danish" },
+                  { value: "de", label: "German" },
+                  { value: "es", label: "Spanish" },
+                  { value: "fr", label: "French" },
+                  { value: "it", label: "Italian" },
+                  { value: "nl", label: "Dutch" },
+                  { value: "no", label: "Norwegian" },
+                  { value: "pl", label: "Polish" },
+                  { value: "pt", label: "Portuguese" },
+                  { value: "sv", label: "Swedish" },
+                  { value: "uk", label: "Ukrainian" },
+                  { value: "zh", label: "Chinese" },
+                ]}
+                onChange={(v) =>
+                  setDraft((prev) =>
+                    prev ? { ...prev, autoTranslateTargetLang: v } : prev
+                  )
+                }
+              />
             </div>
           )}
         </section>
@@ -878,21 +977,23 @@ export function SettingsView({ onClose, onSaved }: Props) {
         <section className="space-y-3">
           <div>
             <h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
-              <Lock size={11} /> Vault lock
+              <Lock size={11} /> Vault password
             </h3>
             <p className="mt-1 text-[12px] text-fg-muted">
-              Encrypt the vault at rest with a password. Keep it safe — there is no recovery.
+              Protects your whole clipboard library (All / Text / Images / …) — there is no separate
+              Vault tab. With a password set, the library encrypts when you quit SnipClip. Keep it
+              safe; there is no recovery.
             </p>
           </div>
           <div className="space-y-3 rounded-lg border border-line bg-raised px-4 py-3">
-            {vaultLocked ? (
+            {Boolean(draft.vaultPasswordHash?.length) ? (
               <button
                 type="button"
                 onClick={() => void handleUnlockVault()}
                 disabled={vaultBusy}
                 className="inline-flex items-center gap-1.5 rounded-md border border-line bg-hover px-3 py-2 text-[12px] font-medium text-fg-secondary transition hover:bg-muted disabled:opacity-50"
               >
-                <Unlock size={12} /> Unlock vault
+                <Unlock size={12} /> Remove vault password
               </button>
             ) : (
               <>
@@ -911,7 +1012,7 @@ export function SettingsView({ onClose, onSaved }: Props) {
                   disabled={vaultBusy || !vaultPassword}
                   className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-[12px] font-semibold text-accent-fg hover:brightness-110 disabled:opacity-50"
                 >
-                  <Lock size={12} /> Lock vault
+                  <Lock size={12} /> Set vault password
                 </button>
               </>
             )}
@@ -919,12 +1020,11 @@ export function SettingsView({ onClose, onSaved }: Props) {
               <p
                 className={clsx(
                   "text-[12px] leading-relaxed",
-                  vaultMessage.toLowerCase().includes("no recovery") ||
-                    vaultMessage.toLowerCase().includes("locked")
+                  vaultMessage.toLowerCase().includes("safe") ||
+                    vaultMessage.toLowerCase().includes("saved") ||
+                    vaultMessage.toLowerCase().includes("removed")
                     ? "font-medium text-accent"
-                    : vaultMessage.toLowerCase().includes("unlock")
-                      ? "text-fg-secondary"
-                      : "text-danger"
+                    : "text-danger"
                 )}
               >
                 {vaultMessage}
@@ -974,22 +1074,22 @@ export function SettingsView({ onClose, onSaved }: Props) {
                   Schedule rotation for unpinned clipboard items.
                 </span>
               </div>
-              <select
+              <SelectDropdown
+                aria-label="Auto-clear frequency"
+                wide
                 value={draft.clearInterval}
-                onChange={(e) =>
+                options={[
+                  { value: "never", label: "Never (manual only)" },
+                  { value: "reboot", label: "Every PC reboot" },
+                  { value: "daily", label: "Every 24 hours" },
+                  { value: "weekly", label: "Every 7 days" },
+                ]}
+                onChange={(v) =>
                   setDraft((prev) =>
-                    prev
-                      ? { ...prev, clearInterval: e.target.value as ClearInterval }
-                      : prev
+                    prev ? { ...prev, clearInterval: v as ClearInterval } : prev
                   )
                 }
-                className="cursor-pointer rounded-md border border-line bg-inset px-3 py-2 text-[12px] text-fg-secondary outline-none focus:border-accent"
-              >
-                <option value="never">Never (manual only)</option>
-                <option value="reboot">Every PC reboot</option>
-                <option value="daily">Every 24 hours</option>
-                <option value="weekly">Every 7 days</option>
-              </select>
+              />
             </div>
           </div>
         </section>

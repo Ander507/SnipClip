@@ -1,6 +1,6 @@
 [package]
 name = "snipclip"
-version = "1.5.2"
+version = "1.5.3"
 description = "Clipboard vault, screenshots, screen recording, and OCR in one tray app"
 authors = ["Ander507"]
 edition = "2021"
@@ -44,7 +44,7 @@ gif = "0.13"
 ffmpeg-sidecar = "2.0"
 ocrs = "0.12"
 rten = "0.24"
-ureq = { version = "2", default-features = false, features = ["tls"] }
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 xcap = "0.0.14"
 uuid = { version = "1", features = ["v4"] }
 open = "5.0"

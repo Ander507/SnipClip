@@ -4,6 +4,20 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.5.3] — 2026-09-06
+
+### Vault + library
+
+- **Vault password crash fix:** correct AES-GCM nonce size, safer encrypt path, and salt in the `.enc` header so lock/unlock no longer panics.
+- **Sidebar tabs apply correctly:** Settings order drives the library; hotkeys no longer re-register on every tab save.
+- **Clear history:** refreshes category counts and shows a floating toast (including when pinned items are kept).
+
+### Auto-translate
+
+- **Opt-in MyMemory translate** (off by default) with target language in Settings.
+- **Translated items** show the translation plus a way to copy original or translation.
+- **Themed dropdowns** via portal so Settings menus are not clipped by scroll containers.
+
 ## [1.5.2] — 2026-09-05
 
 ### Installer

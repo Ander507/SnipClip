@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
 import {
+  Copy,
   Pin,
   Link2,
   Type,
@@ -14,12 +15,14 @@ import {
   X,
   Film,
   Sigma,
+  Languages,
 } from "lucide-react";
 import type { ClipboardItem } from "../lib/types";
 import {
   detectLanguage,
   languageLabel,
 } from "../lib/codeDetect";
+import { parseTranslatedContent } from "../lib/translatedContent";
 import { CodePreview } from "./CodePreview";
 import { SmartTextPreview } from "./SmartTextPreview";
 import { displayUrl, isLinkItem, linkHrefFromText } from "../lib/urls";
@@ -40,6 +43,7 @@ function TypeIcon({ type, isCode }: { type: string; isCode?: boolean }) {
   if (type === "video" || type === "gif") return <Film size={14} />;
   if (type === "link") return <Link2 size={14} />;
   if (type === "math") return <Sigma size={14} />;
+  if (type === "translated") return <Languages size={14} />;
   return <Type size={14} />;
 }
 
@@ -56,6 +60,8 @@ interface Props {
   ocrAvailable?: boolean;
   onSelect: () => void;
   onCopy: () => void;
+  /** Copy the pre-translation source text (translated items only). */
+  onCopyOriginal?: () => void;
   onExtractText: () => void;
   onPin: () => void;
   onDelete: () => void;
@@ -72,6 +78,7 @@ export function ClipboardItemRow({
   ocrAvailable = false,
   onSelect,
   onCopy,
+  onCopyOriginal,
   onExtractText,
   onPin,
   onDelete,
@@ -92,9 +99,12 @@ export function ClipboardItemRow({
   const isImage = item.contentType === "image" || item.contentType === "screenshot";
   const isVideo = item.contentType === "video" || item.contentType === "gif";
   const isMath = item.contentType === "math";
-  const isLink = !isImage && !isVideo && !isMath && !isCode && isLinkItem(item.contentType, textBody);
+  const isTranslated = item.contentType === "translated";
+  const translatedParts = isTranslated ? parseTranslatedContent(textBody) : null;
+  const isLink =
+    !isImage && !isVideo && !isMath && !isTranslated && !isCode && isLinkItem(item.contentType, textBody);
   const href = isLink ? linkHrefFromText(textBody) : null;
-  const canEdit = !isImage && !isVideo && !isMath && !isCode;
+  const canEdit = !isImage && !isVideo && !isMath && !isTranslated && !isCode;
 
   useEffect(() => {
     if (!editing) setDraft(item.content || item.preview || "");
@@ -168,6 +178,17 @@ export function ClipboardItemRow({
           <p className="truncate text-xs font-medium text-fg-secondary">
             {item.content || item.preview || "Solved math"}
           </p>
+        ) : isTranslated ? (
+          <div className="min-w-0 space-y-0.5">
+            <p className="truncate text-xs font-medium text-fg-secondary">
+              {translatedParts?.translated || item.preview || "Translation"}
+            </p>
+            {translatedParts?.original && (
+              <p className="truncate text-[11px] text-fg-muted" title={translatedParts.original}>
+                Copied: {translatedParts.original}
+              </p>
+            )}
+          </div>
         ) : isCode ? (
           <CodePreview content={textBody} />
         ) : editing ? (
@@ -215,7 +236,9 @@ export function ClipboardItemRow({
                 ? "screenshot"
                 : item.contentType === "math"
                   ? "math"
-                  : item.contentType}
+                  : item.contentType === "translated"
+                    ? "translated"
+                    : item.contentType}
           </span>
           <span className="text-[10px] text-fg-faint">•</span>
           <span className="font-mono text-[10px] text-fg-faint">{formatTime(item.createdAt)}</span>
@@ -313,6 +336,46 @@ export function ClipboardItemRow({
                 }}
               >
                 <ScanText size={13} />
+              </button>
+            )}
+            {isTranslated ? (
+              <>
+                <button
+                  type="button"
+                  title="Copy translation"
+                  className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCopy();
+                  }}
+                >
+                  <Languages size={13} />
+                </button>
+                {onCopyOriginal && translatedParts?.original && (
+                  <button
+                    type="button"
+                    title="Copy original"
+                    className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCopyOriginal();
+                    }}
+                  >
+                    <Type size={13} />
+                  </button>
+                )}
+              </>
+            ) : (
+              <button
+                type="button"
+                title="Copy"
+                className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopy();
+                }}
+              >
+                <Copy size={13} />
               </button>
             )}
             <button

@@ -100,8 +100,17 @@ fn copy_item_to_clipboard(item: &ClipboardItem) -> Result<(), String> {
             let path = std::path::PathBuf::from(&item.content);
             clipboard::write_files_to_clipboard(&[path])
         }
-        _ => clipboard::write_text_to_clipboard(&item.content),
+        _ => clipboard::write_text_to_clipboard(clipboard_text_for_item(item)),
     }
+}
+
+fn clipboard_text_for_item(item: &ClipboardItem) -> &str {
+    if item.content_type == "translated" {
+        if let Some((translated, _)) = item.content.split_once("\n\n——— original ———\n") {
+            return translated.trim();
+        }
+    }
+    item.content.as_str()
 }
 
 #[tauri::command]
@@ -568,14 +577,25 @@ pub fn update_settings(
     _hotkeys: State<'_, Arc<HotkeyState>>,
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
-    if let Err(e) = hotkeys::apply_hotkeys(&app, &settings) {
-        // Tell the UI which hotkey collided with a system shortcut (Win+V, Snipping Tool, Game Bar…)
-        let _ = app.emit(
-            "hotkey-conflict",
-            &serde_json::json!({ "message": e }),
-        );
-        return Err(e);
+    let previous = db.get_settings().unwrap_or_default();
+    let hotkeys_changed = previous.hotkey_clipboard != settings.hotkey_clipboard
+        || previous.hotkey_snip != settings.hotkey_snip
+        || previous.hotkey_record != settings.hotkey_record
+        || previous.snip_delay_enabled != settings.snip_delay_enabled
+        || previous.snip_delay_ms != settings.snip_delay_ms;
+
+    // Skip re-registering shortcuts when only appearance / tabs / ignore list changed —
+    // re-registering on every sidebar tweak was failing saves and made tabs look broken.
+    if hotkeys_changed {
+        if let Err(e) = hotkeys::apply_hotkeys(&app, &settings) {
+            let _ = app.emit(
+                "hotkey-conflict",
+                &serde_json::json!({ "message": e }),
+            );
+            return Err(e);
+        }
     }
+
     let mut settings = settings;
     if let Some(ref bg) = settings.theme_background_image {
         if bg.starts_with("data:image/") {
@@ -585,6 +605,10 @@ pub fn update_settings(
     }
     db.save_settings(&settings)?;
     clipboard::set_ignore_list(settings.ignore_list.clone());
+    clipboard::configure_auto_translate(
+        settings.auto_translate_enabled,
+        &settings.auto_translate_target_lang,
+    );
 
     #[cfg(desktop)]
     {
@@ -599,16 +623,17 @@ pub fn update_settings(
         }
     }
 
-    // Return settings with resolved background for live UI
-    if let Some(ref bg) = settings.theme_background_image {
+    // Return canonical settings from DB (normalized sidebar tabs, etc.)
+    let mut saved = db.get_settings()?;
+    if let Some(ref bg) = saved.theme_background_image {
         if !bg.starts_with("data:") {
             if let Ok(resolved) = crate::themes::resolve_background_url(&app, bg) {
-                settings.theme_background_image = Some(resolved);
+                saved.theme_background_image = Some(resolved);
             }
         }
     }
 
-    Ok(settings)
+    Ok(saved)
 }
 
 /// Spec alias — same as `update_settings`.
@@ -761,41 +786,49 @@ pub fn set_vault_password(
 
     let password_empty = password.is_empty();
 
-    // If the vault is already encrypted, decrypt it first so we can re-encrypt with the new password.
+    // Fully locked at rest (plain DB wiped): must decrypt before clearing/changing.
     if vault::is_vault_locked(&app_data) {
-        let enc_path = db_path.with_extension("db.enc");
-        let salt = db
-            .get_settings()?
-            .vault_password_salt
-            .ok_or_else(|| "vault is locked but no salt is stored".to_string())?;
-        let pw = if password_empty {
-            return Err("current password is required to change it".into());
-        } else {
-            password.clone()
-        };
-        vault::decrypt_vault(&enc_path, &pw, &salt)?;
+        let enc_path = app_data.join("snipclip.db.enc");
+        if password_empty {
+            return Err("enter your password to unlock before removing it".into());
+        }
+        let unlocked = vault::decrypt_vault(&enc_path, &password)?;
+        db.reopen(&unlocked)?;
     }
 
     let mut settings = db.get_settings()?;
     if password_empty {
-        // Removing the lock: clear the hash + salt so unlock is no longer prompted.
         settings.vault_password_hash = None;
         settings.vault_password_salt = None;
+        vault::clear_session();
+        let enc_path = app_data.join("snipclip.db.enc");
+        let _ = std::fs::remove_file(&enc_path);
     } else {
         let salt = settings
             .vault_password_salt
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| vault::generate_salt().to_vec());
-        let hash = vault::hash_password(&password.clone(), &salt);
+            .as_ref()
+            .filter(|s| s.len() >= vault::SALT_LEN)
+            .map(|s| {
+                let mut out = [0u8; vault::SALT_LEN];
+                out.copy_from_slice(&s[..vault::SALT_LEN]);
+                out
+            })
+            .unwrap_or_else(vault::generate_salt);
+        let hash = vault::hash_password(&password, &salt);
         settings.vault_password_hash = Some(hash.to_vec());
         settings.vault_password_salt = Some(salt.to_vec());
-        // Encrypt the plain DB in place.
-        vault::encrypt_vault(&db_path, &password.clone(), &salt)?;
+        // Flush WAL so the on-disk bytes match the open connection.
+        let _ = db.checkpoint();
+        // Snapshot encrypt without wiping — SQLite still has the plain file open.
+        vault::encrypt_vault(&db_path, &password, &salt, false)?;
     }
     db.save_settings(&settings)?;
     let _ = app.emit(
         "vault-lock-changed",
-        &serde_json::json!({ "locked": password.len() > 0 }),
+        &serde_json::json!({
+            "locked": vault::is_vault_locked(&app_data),
+            "passwordSet": settings.vault_password_hash.is_some(),
+        }),
     );
     Ok(())
 }
@@ -816,22 +849,28 @@ pub fn unlock_vault(
     if !enc_path.exists() {
         return Err("vault is not locked".into());
     }
-    let settings = db.get_settings()?;
-    let salt = settings
-        .vault_password_salt
-        .ok_or_else(|| "vault is locked but no salt is stored".to_string())?;
-    let hash = settings
-        .vault_password_hash
-        .ok_or_else(|| "vault is locked but no hash is stored".to_string())?;
-    if !vault::verify_password(&password, &hash, &salt) {
-        return Err("incorrect password".into());
+    let unlocked = vault::decrypt_vault(&enc_path, &password)?;
+    db.reopen(&unlocked)?;
+    if let Ok(app_data) = app.path().app_data_dir() {
+        let _ = std::fs::remove_file(app_data.join("snipclip.unlocking.db"));
     }
-    vault::decrypt_vault(&enc_path, &password, &salt)?;
-    let _ = app.emit("vault-lock-changed", &serde_json::json!({ "locked": false }));
+    // Keep hash/salt in settings so the UI knows a password is configured.
+    let mut settings = db.get_settings()?;
+    if settings.vault_password_hash.is_none() || settings.vault_password_salt.is_none() {
+        let salt = vault::generate_salt();
+        let hash = vault::hash_password(&password, &salt);
+        settings.vault_password_hash = Some(hash.to_vec());
+        settings.vault_password_salt = Some(salt.to_vec());
+        let _ = db.save_settings(&settings);
+    }
+    let _ = app.emit(
+        "vault-lock-changed",
+        &serde_json::json!({ "locked": false, "passwordSet": true }),
+    );
     Ok(())
 }
 
-/// True when `snipclip.db.enc` exists — the vault is locked.
+/// True when `snipclip.db.enc` exists and the plain DB does not.
 #[tauri::command]
 pub fn is_vault_locked(app: AppHandle) -> bool {
     let app_data = app

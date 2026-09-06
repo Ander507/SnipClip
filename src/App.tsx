@@ -28,12 +28,14 @@ import {
   showMainWindow,
   openVideoEditor,
   getCategoryCounts,
+  copyText,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
 import { applyTheme } from "./lib/theme";
 import { itemMatchesCategory, itemMatchesSearch } from "./lib/search";
 import { useStatusToast } from "./lib/useStatusToast";
+import { parseTranslatedContent } from "./lib/translatedContent";
 
 interface ScreenshotEditorRequest {
   vaultId: number;
@@ -83,6 +85,14 @@ function App() {
     }
   }, [category, debouncedQuery]);
 
+  const refreshCounts = useCallback(async () => {
+    try {
+      setCounts(await getCategoryCounts());
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
   useEffect(() => {
     const handle = window.setTimeout(() => setDebouncedQuery(query), 200);
     return () => window.clearTimeout(handle);
@@ -105,6 +115,9 @@ function App() {
           themeBackgroundImage: s.themeBackgroundImage ?? null,
           snipDelayEnabled: s.snipDelayEnabled ?? false,
           snipDelayMs: s.snipDelayMs ?? 3000,
+          sidebarTabs: s.sidebarTabs ?? DEFAULT_SETTINGS.sidebarTabs,
+          autoTranslateEnabled: s.autoTranslateEnabled ?? false,
+          autoTranslateTargetLang: s.autoTranslateTargetLang ?? "en",
         };
         setSettings(next);
         applyTheme(next);
@@ -152,6 +165,7 @@ function App() {
     void listen<ClipboardItem>("clipboard-item", (event) => {
       const item = event.payload;
       if (!item) return;
+      void refreshCounts();
       const cat = categoryRef.current;
       const q = debouncedQueryRef.current;
       if (!itemMatchesCategory(item, cat)) return;
@@ -190,6 +204,16 @@ function App() {
       } else {
         setStatus("OCR text copied", 2000);
       }
+    }).then((u) => unsubs.push(u));
+
+    void listen<{ targetLang?: string; preview?: string }>("auto-translated", (event) => {
+      const lang = (event.payload?.targetLang ?? "en").toUpperCase();
+      const preview = event.payload?.preview?.trim();
+      setStatus(
+        preview ? `Translated → ${lang}: ${preview}` : `Translated → ${lang}`,
+        2800
+      );
+      void refreshCounts();
     }).then((u) => unsubs.push(u));
 
     void listen<{ message?: string }>("hotkey-conflict", (event) => {
@@ -246,7 +270,7 @@ function App() {
     }).then((u) => unsubs.push(u));
 
     return () => unsubs.forEach((u) => u());
-  }, []);
+  }, [refresh, refreshCounts]);
 
   async function handleExtractText(id: number) {
     try {
@@ -274,8 +298,12 @@ function App() {
 
   async function handleCopy(id: number) {
     try {
+      const item = items.find((i) => i.id === id);
       await copyItem(id);
-      setStatus("Copied", 1200);
+      setStatus(
+        item?.contentType === "translated" ? "Copied translation" : "Copied",
+        1200
+      );
     } catch (err) {
       const msg = String(err);
       if (msg.toLowerCase().includes("not found")) {
@@ -287,13 +315,35 @@ function App() {
     }
   }
 
+  async function handleCopyOriginal(id: number) {
+    try {
+      const item =
+        items.find((i) => i.id === id) ?? (await getItem(id));
+      if (!item) {
+        setStatus("Item no longer available", 1600);
+        return;
+      }
+      const { original } = parseTranslatedContent(item.content || "");
+      if (!original) {
+        setStatus("No original text", 1600);
+        return;
+      }
+      await copyText(original);
+      setStatus("Copied original", 1200);
+    } catch (err) {
+      setStatus(String(err), 1600);
+    }
+  }
+
   async function handlePin(id: number) {
     try {
       await togglePin(id);
       await refresh();
+      await refreshCounts();
     } catch (err) {
       setStatus(String(err), 1600);
       await refresh();
+      await refreshCounts();
     }
   }
 
@@ -302,9 +352,11 @@ function App() {
       await deleteItem(id);
       if (previewId === id) closeImagePreview();
       await refresh();
+      await refreshCounts();
     } catch (err) {
       setStatus(String(err), 1600);
       await refresh();
+      await refreshCounts();
     }
   }
 
@@ -355,10 +407,19 @@ function App() {
       setSelectedId(null);
       await clearHistory();
       await refresh();
-      setStatus("History cleared", 1400);
+      await refreshCounts();
+      const remaining = (await listItems("all", "")) ?? [];
+      const pinnedLeft = remaining.filter((i) => i.isPinned).length;
+      setStatus(
+        pinnedLeft > 0
+          ? `Cleared · ${pinnedLeft} pinned item${pinnedLeft === 1 ? "" : "s"} kept`
+          : "History cleared",
+        1800
+      );
     } catch (err) {
       setStatus(String(err), 1600);
       await refresh();
+      await refreshCounts();
     }
   }
 
@@ -471,14 +532,13 @@ function App() {
         void handlePin(selectedIdRef.current);
       }
 
-      // Digit keys 1-7 jump to the Nth visible library tab (1=All, 2=Text, …, 7=Pinned)
-      if (!inInput && /^[1-7]$/.test(e.key)) {
+      // Digit keys jump to the Nth visible library tab
+      if (!inInput && /^[1-9]$/.test(e.key)) {
         const n = Number(e.key);
-        const visibleTabs = (
+        const visibleTabs =
           settings.sidebarTabs.length > 0
             ? settings.sidebarTabs
-            : ["all", "text", "images", "screenshots", "videos", "links", "pinned"]
-        ).filter((id) => id === "all" || (counts[id] ?? 0) > 0);
+            : ["all", "text", "images", "screenshots", "videos", "math", "links", "pinned"];
         const target = visibleTabs[n - 1];
         if (target) {
           e.preventDefault();
@@ -493,7 +553,7 @@ function App() {
   }, [items, capture, view, counts, settings.sidebarTabs]);
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-app text-fg">
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-app text-fg">
       <TitleBar
         paused={clipboardPaused}
         onTogglePause={() => {
@@ -512,8 +572,9 @@ function App() {
           onClear={() => void handleClear()}
           onSettings={() => setView("settings")}
           settingsOpen={view === "settings"}
-          count={items.length}
+          count={counts.all ?? items.length}
           counts={counts}
+          sidebarTabs={settings.sidebarTabs}
           snipHotkeyLabel={formatHotkeyShort(settings.hotkeySnip)}
           snipDelayEnabled={settings.snipDelayEnabled}
         />
@@ -533,7 +594,7 @@ function App() {
                 <p className="mt-2 text-[11px] text-fg-faint">
                   ↑↓ navigate · Enter copy ·{" "}
                   {formatHotkeyShort(settings.hotkeyClipboard)} toggle
-                  {clipboardPaused ? " · listening paused" : ""} · 1-7 switch tab
+                  {clipboardPaused ? " · listening paused" : ""} · 1–9 switch tab
                 </p>
               </div>
               <ClipboardList
@@ -543,6 +604,7 @@ function App() {
                 hotkeyPalette="Alt+C"
                 onSelect={setSelectedId}
                 onCopy={(id) => void handleCopy(id)}
+                onCopyOriginal={(id) => void handleCopyOriginal(id)}
                 onExtractText={(id) => void handleExtractText(id)}
                 onPin={(id) => void handlePin(id)}
                 onDelete={(id) => void handleDelete(id)}
@@ -551,15 +613,19 @@ function App() {
                 onOpenLink={(url) => void handleOpenLink(url)}
                 onUpdate={(id, content) => void handleUpdateItem(id, content)}
               />
-              {status && (
-                <div className="border-t border-line px-4 py-2 text-[11px] text-accent">
-                  {status}
-                </div>
-              )}
             </>
           )}
         </main>
       </div>
+
+      {status && (
+        <div
+          role="status"
+          className="pointer-events-none absolute bottom-4 left-1/2 z-[200] max-w-[min(90vw,28rem)] -translate-x-1/2 rounded-lg border border-line bg-raised px-3.5 py-2 text-center text-[12px] text-fg shadow-lg"
+        >
+          {status}
+        </div>
+      )}
 
       <ImageViewerModal
         imageSrc={previewSrc}

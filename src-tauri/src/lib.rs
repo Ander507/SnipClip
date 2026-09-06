@@ -13,6 +13,7 @@ mod screenshot_popup;
 mod snip;
 mod system_audio;
 mod themes;
+mod translate;
 mod vault;
 mod video_edit;
 mod video_editor_window;
@@ -24,7 +25,7 @@ use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    Emitter, Manager, RunEvent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -129,26 +130,51 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             let db_path = app_data.join("snipclip.db");
+            let enc_path = app_data.join("snipclip.db.enc");
 
             // Apply a staged vault import (from `import_vault`) before opening the DB.
             // The staged file may be a plain `snipclip.db` or an encrypted `snipclip.db.enc`.
             let staged = app_data.join("snipclip.db.import");
             if staged.exists() {
-                let is_enc = staged.extension().map_or(false, |e| e == "db.enc");
+                let is_enc = staged.extension().map_or(false, |e| e == "db.enc")
+                    || staged
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.ends_with(".db.enc"));
                 let dest_name = if is_enc { "snipclip.db.enc" } else { "snipclip.db" };
                 let dest = app_data.join(dest_name);
                 let _ = std::fs::rename(&staged, &dest);
             }
 
-            // Lightweight open so commands have a handle; heavy cleanup runs below
-            let database = match Database::open(db_path) {
-                Ok(db) => Arc::new(db),
-                Err(e) => {
-                    eprintln!("database open failed: {e}");
-                    return Err(e.into());
+            let at_rest_locked = enc_path.exists() && !db_path.exists();
+            let database = if at_rest_locked {
+                // Placeholder so commands have a State handle until unlock_vault reopens
+                // the real decrypted file.
+                let placeholder = app_data.join("snipclip.unlocking.db");
+                let _ = std::fs::remove_file(&placeholder);
+                match Database::open(placeholder) {
+                    Ok(db) => Arc::new(db),
+                    Err(e) => {
+                        eprintln!("database open failed: {e}");
+                        return Err(e.into());
+                    }
+                }
+            } else {
+                match Database::open(db_path.clone()) {
+                    Ok(db) => Arc::new(db),
+                    Err(e) => {
+                        eprintln!("database open failed: {e}");
+                        return Err(e.into());
+                    }
                 }
             };
             app.manage(database.clone());
+            if at_rest_locked {
+                let _ = app.emit(
+                    "vault-lock-changed",
+                    &serde_json::json!({ "locked": true, "passwordSet": true }),
+                );
+            }
 
             let db_for_clear = database.clone();
             std::thread::spawn(move || {
@@ -269,6 +295,23 @@ pub fn run() {
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let RunEvent::Exit = event {
+                // Encrypt + wipe plain DB when a vault password is active this session.
+                if let Ok(app_data) = app_handle.path().app_data_dir() {
+                    let db_path = app_data.join("snipclip.db");
+                    if vault::has_session() && db_path.exists() {
+                        if let Some(db) = app_handle.try_state::<Arc<Database>>() {
+                            let _ = db.checkpoint();
+                        }
+                        if let Err(e) = vault::encrypt_vault_with_session(&db_path, true) {
+                            eprintln!("vault encrypt on exit failed: {e}");
+                        }
+                    }
+                    let _ = std::fs::remove_file(app_data.join("snipclip.unlocking.db"));
+                }
+            }
+        });
 }

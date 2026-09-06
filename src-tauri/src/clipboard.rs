@@ -82,6 +82,10 @@ pub fn set_ignore_list(names: Vec<String>) {
     *ignore_list().lock() = crate::db::normalize_ignore_list(names);
 }
 
+pub fn configure_auto_translate(enabled: bool, target_lang: &str) {
+    crate::translate::configure(enabled, target_lang);
+}
+
 fn process_is_ignored(process: &str, list: &[String]) -> bool {
     let proc = process.to_lowercase();
     let stem = std::path::Path::new(&proc)
@@ -270,7 +274,35 @@ fn process_clipboard_snapshot(
                     }
                 } else {
                     let (ctype, preview) = classify_text(&text);
-                    if let Ok(item) = db.insert(ctype, &text, &preview) {
+                    if ctype == "text" {
+                        if let Some(tr) = crate::translate::try_translate(&text) {
+                            let tr_preview: String = format!(
+                                "→{} · {}",
+                                tr.target_lang.to_ascii_uppercase(),
+                                tr.translated.chars().take(100).collect::<String>()
+                            );
+                            // Keep original under the translation so search still finds either.
+                            let content = format!(
+                                "{}\n\n——— original ———\n{}",
+                                tr.translated.trim(),
+                                text.trim()
+                            );
+                            if let Ok(item) = db.insert("translated", &content, &tr_preview) {
+                                let _ = app.emit("clipboard-item", &item.for_event());
+                                let _ = app.emit(
+                                    "auto-translated",
+                                    serde_json::json!({
+                                        "targetLang": tr.target_lang,
+                                        "preview": tr.translated.chars().take(80).collect::<String>(),
+                                    }),
+                                );
+                            } else if let Ok(item) = db.insert(ctype, &text, &preview) {
+                                let _ = app.emit("clipboard-item", &item.for_event());
+                            }
+                        } else if let Ok(item) = db.insert(ctype, &text, &preview) {
+                            let _ = app.emit("clipboard-item", &item.for_event());
+                        }
+                    } else if let Ok(item) = db.insert(ctype, &text, &preview) {
                         let _ = app.emit("clipboard-item", &item.for_event());
                     }
                 }
@@ -342,6 +374,10 @@ pub fn start_monitor(app: AppHandle) {
     if let Some(db) = app.try_state::<Arc<Database>>() {
         if let Ok(settings) = db.get_settings() {
             set_ignore_list(settings.ignore_list);
+            configure_auto_translate(
+                settings.auto_translate_enabled,
+                &settings.auto_translate_target_lang,
+            );
         }
     }
 

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub const MAX_HISTORY: usize = 500;
@@ -85,10 +85,20 @@ pub struct AppSettings {
     /// 16-byte salt for the vault password hash. Empty = no lock.
     #[serde(default)]
     pub vault_password_salt: Option<Vec<u8>>,
+    /// When true, plain text copies are auto-translated into `auto_translate_target_lang`.
+    #[serde(default)]
+    pub auto_translate_enabled: bool,
+    /// ISO 639-1 target language (e.g. "en", "da"). Default English.
+    #[serde(default = "default_auto_translate_target_lang")]
+    pub auto_translate_target_lang: String,
 }
 
 fn default_snip_delay_ms() -> u32 {
     3000
+}
+
+fn default_auto_translate_target_lang() -> String {
+    "en".into()
 }
 
 fn default_hotkey_record() -> String {
@@ -164,6 +174,8 @@ impl Default for AppSettings {
             sidebar_tabs: default_sidebar_tabs(),
             vault_password_hash: None,
             vault_password_salt: None,
+            auto_translate_enabled: false,
+            auto_translate_target_lang: default_auto_translate_target_lang(),
         }
     }
 }
@@ -212,9 +224,37 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
+        let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| e.to_string())?;
+        Self::apply_schema(&conn)?;
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        db.ensure_default_settings()?;
+        db.ensure_fts_populated()?;
+        Ok(db)
+    }
+
+    /// Swap the live connection to a newly decrypted DB file (after unlock).
+    pub fn reopen(&self, path: &Path) -> Result<(), String> {
         let conn = Connection::open(path).map_err(|e| e.to_string())?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|e| e.to_string())?;
+        Self::apply_schema(&conn)?;
+        *self.conn.lock().map_err(|e| e.to_string())? = conn;
+        self.ensure_default_settings()?;
+        self.ensure_fts_populated()?;
+        Ok(())
+    }
+
+    pub fn checkpoint(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|e| e.to_string())
+    }
+
+    fn apply_schema(conn: &Connection) -> Result<(), String> {
         conn.execute_batch(
             "
             PRAGMA journal_mode = WAL;
@@ -241,13 +281,7 @@ impl Database {
             ",
         )
         .map_err(|e| e.to_string())?;
-
-        let db = Self {
-            conn: Mutex::new(conn),
-        };
-        db.ensure_default_settings()?;
-        db.ensure_fts_populated()?;
-        Ok(db)
+        Ok(())
     }
 
     /// Indexable body for FTS — skip huge image data-URLs; keep text/link/previews searchable.
@@ -494,6 +528,21 @@ impl Database {
             .and_then(|raw| {
                 serde_json::from_str::<Vec<u8>>(&raw).ok()
             });
+        let auto_translate_enabled = self
+            .get_setting("auto_translate_enabled")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let auto_translate_target_lang = self
+            .get_setting("auto_translate_target_lang")?
+            .map(|s| {
+                let t = s.trim().to_ascii_lowercase();
+                if t.len() == 2 && t.chars().all(|c| c.is_ascii_alphabetic()) {
+                    t
+                } else {
+                    default_auto_translate_target_lang()
+                }
+            })
+            .unwrap_or_else(default_auto_translate_target_lang);
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -521,6 +570,8 @@ impl Database {
             sidebar_tabs,
             vault_password_hash,
             vault_password_salt,
+            auto_translate_enabled,
+            auto_translate_target_lang,
         })
     }
 
@@ -612,6 +663,23 @@ impl Database {
         } else {
             self.set_setting("vault_password_salt", "")?;
         }
+        self.set_setting(
+            "auto_translate_enabled",
+            if settings.auto_translate_enabled {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        let lang = {
+            let t = settings.auto_translate_target_lang.trim().to_ascii_lowercase();
+            if t.len() == 2 && t.chars().all(|c| c.is_ascii_alphabetic()) {
+                t
+            } else {
+                default_auto_translate_target_lang()
+            }
+        };
+        self.set_setting("auto_translate_target_lang", &lang)?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }
@@ -793,8 +861,7 @@ impl Database {
         if let Some(cat) = category {
             match cat {
                 "text" => {
-                    sql.push_str(" AND content_type = ?");
-                    binds.push(Box::new("text".to_string()));
+                    sql.push_str(" AND content_type IN ('text', 'translated')");
                 }
                 "images" => {
                     sql.push_str(" AND content_type = ?");
@@ -810,6 +877,10 @@ impl Database {
                 "links" => {
                     sql.push_str(" AND content_type = ?");
                     binds.push(Box::new("link".to_string()));
+                }
+                "math" => {
+                    sql.push_str(" AND content_type = ?");
+                    binds.push(Box::new("math".to_string()));
                 }
                 "pinned" => {
                     sql.push_str(" AND is_pinned = 1");
@@ -935,6 +1006,23 @@ impl Database {
             )
             .map_err(|e| e.to_string())?;
         out.push(("all".into(), total));
+        // Roll translated items into the Text badge
+        let mut text_extra: i64 = 0;
+        out.retain(|(k, v)| {
+            if k == "translated" {
+                text_extra += *v;
+                false
+            } else {
+                true
+            }
+        });
+        if text_extra > 0 {
+            if let Some((_, n)) = out.iter_mut().find(|(k, _)| k == "text") {
+                *n += text_extra;
+            } else {
+                out.push(("text".into(), text_extra));
+            }
+        }
         Ok(out)
     }
 

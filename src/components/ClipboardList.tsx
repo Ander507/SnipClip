@@ -19,6 +19,7 @@ interface Props {
   ocrAvailable?: boolean;
   onSelect: (id: number) => void;
   onCopy: (id: number) => void;
+  onCopyOriginal?: (id: number) => void;
   onExtractText: (id: number) => void;
   onPin: (id: number) => void;
   onDelete: (id: number) => void;
@@ -36,6 +37,7 @@ export function ClipboardList({
   ocrAvailable = false,
   onSelect,
   onCopy,
+  onCopyOriginal,
   onExtractText,
   onPin,
   onDelete,
@@ -65,9 +67,12 @@ export function ClipboardList({
       if (item.id === editingId) {
         return EDIT_BASE_HEIGHT + editLines * EDIT_LINE_HEIGHT + ROW_GAP;
       }
-      const base = isCodeSnippet(item.content || item.preview, item.contentType)
-        ? CODE_ROW_HEIGHT
-        : ROW_HEIGHT;
+      const base =
+        item.contentType === "translated"
+          ? 92
+          : isCodeSnippet(item.content || item.preview, item.contentType)
+            ? CODE_ROW_HEIGHT
+            : ROW_HEIGHT;
       return base + ROW_GAP;
     },
     overscan: 10,
@@ -91,7 +96,7 @@ export function ClipboardList({
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted text-accent">
             <Copy size={18} />
           </div>
-          <p className="text-sm font-medium text-fg-secondary">Your vault is empty</p>
+          <p className="text-sm font-medium text-fg-secondary">Your library is empty</p>
           <p className="mt-1.5 max-w-[280px] text-[12px] leading-relaxed text-fg-muted">
             Copy anything — text, links, or images — and it will show up here automatically.
           </p>
@@ -124,6 +129,9 @@ export function ClipboardList({
                 ocrAvailable={ocrAvailable}
                 onSelect={() => onSelect(item.id)}
                 onCopy={() => onCopy(item.id)}
+                onCopyOriginal={
+                  onCopyOriginal ? () => onCopyOriginal(item.id) : undefined
+                }
                 onExtractText={() => onExtractText(item.id)}
                 onPin={() => onPin(item.id)}
                 onDelete={() => onDelete(item.id)}

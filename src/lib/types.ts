@@ -6,6 +6,7 @@ export type Category =
   | "images"
   | "screenshots"
   | "videos"
+  | "math"
   | "links"
   | "pinned";
 
@@ -62,6 +63,10 @@ export interface AppSettings {
   vaultPasswordHash: number[] | null;
   /** 16-byte salt for the vault password hash. null = no lock. */
   vaultPasswordSalt: number[] | null;
+  /** When true, plain text copies are auto-translated (network). Off by default. */
+  autoTranslateEnabled: boolean;
+  /** ISO 639-1 target language, e.g. "en". */
+  autoTranslateTargetLang: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -82,9 +87,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ignoreList: [],
   snipDelayEnabled: false,
   snipDelayMs: 3000,
-  sidebarTabs: ["all", "text", "images", "screenshots", "videos", "links", "pinned"],
+  sidebarTabs: ["all", "text", "images", "screenshots", "videos", "math", "links", "pinned"],
   vaultPasswordHash: null,
   vaultPasswordSalt: null,
+  autoTranslateEnabled: false,
+  autoTranslateTargetLang: "en",
 };
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";
