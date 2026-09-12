@@ -66,20 +66,28 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: SnipClip ${{ github.ref_name }}
           releaseBody: |
-            ## Install
+            ## What's New in ${{ github.ref_name }}
 
-            - **Windows:** NSIS `.exe`, `.msi`, or **portable `.zip`** (no install — unzip and run `SnipClip.exe`)
-            - **Linux:** `.AppImage` and `.deb`
+            See [CHANGELOG.md](https://github.com/Ander507/SnipClip/blob/master/CHANGELOG.md) for the full list for this tag.
 
-            WebView2 is required on Windows and is already on most Windows 10/11 PCs.
+            ### Highlights
 
-            ## What's new
-
-            See [CHANGELOG.md](https://github.com/Ander507/SnipClip/blob/master/CHANGELOG.md) for full release notes.
+            - **Multi-monitor snip & record:** Per-display overlays with correct coordinates on secondary monitors (including negative desktop offsets).
+            - **In-app video editor:** Trim with lossless `-c copy` when possible, crop, mute, or export to GIF.
+            - **SQLite FTS5 command palette:** Fast prefix search on `Alt+C` across clipboard history.
+            - **Vault & capture studio:** Password-protected vault, OCR, math auto-solve, opt-in auto-translate, and tray-first hotkeys.
 
             **Quick try:** install → copy something → `Ctrl+Shift+V` for the vault → `Alt+C` for the paste palette → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
 
-            Multi-monitor snip/record and the in-app video editor (trim / crop / mute / GIF) are included.
+            ### Installation
+
+            1. Download `SnipClip_*_x64-setup.exe` below (or the MSI / portable zip).
+            2. If Windows SmartScreen prompts on first run, click **More info** → **Run anyway**.
+
+            - **Windows:** NSIS `.exe`, `.msi`, or portable `.zip` (unzip and run `SnipClip.exe`)
+            - **Linux:** `.AppImage` and `.deb`
+
+            WebView2 is required on Windows and is already on most Windows 10/11 PCs.
 
             The auto-updater uses `latest.json` from this release (installers only).
           releaseDraft: false
