@@ -1,4 +1,17 @@
 //! Detect and evaluate simple arithmetic pasted onto the clipboard.
+//! Opt-in via settings — never mutates the raw clipboard when enabled.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn configure(enabled: bool) {
+    ENABLED.store(enabled, Ordering::SeqCst);
+}
+
+pub fn is_enabled() -> bool {
+    ENABLED.load(Ordering::SeqCst)
+}
 
 /// Normalize common unicode operators so `2×3÷4` still evaluates.
 fn normalize_expr(raw: &str) -> String {
@@ -69,4 +82,28 @@ pub fn try_solve(raw: &str) -> Option<(String, String)> {
         return None;
     }
     Some((expr, result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn solves_unicode_operators() {
+        let (expr, result) = try_solve("2×3÷4").expect("should solve");
+        assert_eq!(expr, "2*3/4");
+        assert_eq!(result, "1.5");
+    }
+
+    #[test]
+    fn rejects_prose() {
+        assert!(try_solve("please add 2+2 later").is_none());
+        assert!(try_solve("hello world").is_none());
+    }
+
+    #[test]
+    fn solves_simple_sum() {
+        let (_, result) = try_solve("60+7").expect("should solve");
+        assert_eq!(result, "67");
+    }
 }

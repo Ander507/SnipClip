@@ -35,6 +35,8 @@ export interface AppSettings {
   hotkeyClipboard: string;
   hotkeySnip: string;
   hotkeyRecord: string;
+  /** Toggle compact dock (default Control+Shift+D). */
+  hotkeyDock: string;
   clearOnBoot: boolean;
   /** "never" | "reboot" | "daily" | "weekly" */
   clearInterval: string;
@@ -67,12 +69,23 @@ export interface AppSettings {
   autoTranslateEnabled: boolean;
   /** ISO 639-1 target language, e.g. "en". */
   autoTranslateTargetLang: string;
+  /** When true, solve arithmetic into a vault badge — never overwrite the clipboard. Off by default. */
+  autoEvalMath: boolean;
+  /** Slim floating vault (Win+V-style) instead of the full studio layout. */
+  compactDock: boolean;
+  /** Keep the main vault window above other apps. */
+  mainAlwaysOnTop: boolean;
+  /** Max unpinned items kept in the vault (50–1000). */
+  maxHistory: number;
+  /** UI scale percent (90–125). */
+  uiScale: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   hotkeyClipboard: "Control+Shift+V",
   hotkeySnip: "Control+Shift+S",
   hotkeyRecord: "Control+Shift+R",
+  hotkeyDock: "Control+Shift+D",
   clearOnBoot: false,
   clearInterval: "never",
   lastCleanup: 0,
@@ -92,6 +105,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vaultPasswordSalt: null,
   autoTranslateEnabled: false,
   autoTranslateTargetLang: "en",
+  autoEvalMath: false,
+  compactDock: false,
+  mainAlwaysOnTop: false,
+  /** Cap unpinned vault items (50–1000). Pinned are never trimmed by this. */
+  maxHistory: 500,
+  /** UI zoom percent (90–125). */
+  uiScale: 100,
 };
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";
@@ -104,5 +124,6 @@ export type AnnotateTool =
   | "circle"
   | "highlight"
   | "blur"
+  | "redact"
   | "number"
   | "eyedropper";

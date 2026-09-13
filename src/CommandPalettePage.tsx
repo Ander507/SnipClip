@@ -2,14 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import clsx from "clsx";
-import { Image as ImageIcon, Link2, Type } from "lucide-react";
+import { Image as ImageIcon, Link2, Pin, Sigma, Type } from "lucide-react";
 import { getSettings, hideCommandPalette, paletteCopyItem, searchClipboard } from "./lib/api";
 import type { ClipboardItem } from "./lib/types";
 import { applyThemeFromSettings } from "./lib/theme";
+import { parseMathContent } from "./lib/mathContent";
 
 function resultLabel(item: ClipboardItem): string {
   if (item.contentType === "image" || item.contentType === "screenshot") {
     return item.preview?.startsWith("data:") ? "Image capture" : item.preview || "Image";
+  }
+  if (item.contentType === "math") {
+    const { expression } = parseMathContent(item.content || "", item.preview || "");
+    return expression || item.preview || item.content || "Equation";
   }
   return item.preview || item.content || "Untitled";
 }
@@ -20,6 +25,9 @@ function TypeBadge({ type }: { type: string }) {
   }
   if (type === "link") {
     return <Link2 size={14} className="shrink-0 text-fg-muted" />;
+  }
+  if (type === "math") {
+    return <Sigma size={14} className="shrink-0 text-fg-muted" />;
   }
   return <Type size={14} className="shrink-0 text-fg-muted" />;
 }
@@ -193,6 +201,9 @@ export function CommandPalette() {
             results.map((item, index) => {
               const thumb =
                 item.preview?.startsWith("data:image") ? item.preview : null;
+              const math = item.contentType === "math"
+                ? parseMathContent(item.content || "", item.preview || "")
+                : null;
               return (
                 <button
                   key={item.id}
@@ -217,9 +228,14 @@ export function CommandPalette() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{resultLabel(item)}</p>
                     <p className="truncate font-mono text-[10px] uppercase tracking-wide text-fg-faint">
+                      {item.isPinned ? "pinned · " : ""}
                       {item.contentType}
+                      {math?.result ? ` · = ${math.result}` : ""}
                     </p>
                   </div>
+                  {item.isPinned && (
+                    <Pin size={12} className="shrink-0 text-accent" />
+                  )}
                 </button>
               );
             })

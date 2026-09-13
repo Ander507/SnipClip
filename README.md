@@ -13,27 +13,31 @@ A tray app for clipboard history, screenshots, screen recording, OCR, and in-app
 </p>
 
 <p align="center">
-  <a href="https://github.com/Ander507/SnipClip/releases/latest"><img src="https://img.shields.io/github/v/release/Ander507/SnipClip?label=Download%20for%20Windows&style=for-the-badge" alt="Download latest release" /></a>
+  <a href="https://github.com/Ander507/SnipClip/releases/latest"><img src="https://img.shields.io/github/v/release/Ander507/SnipClip?label=Download%20latest&style=for-the-badge" alt="Download latest release" /></a>
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/Ander507/SnipClip/releases/latest">Download the latest release</a></strong><br/>
-  Windows: NSIS <code>.exe</code> · MSI · portable <code>.zip</code><br/>
-  Linux: <code>.AppImage</code> · <code>.deb</code>
+  <strong><a href="https://github.com/Ander507/SnipClip/releases/latest">Try the latest release</a></strong> (always <code>/releases/latest</code> — not an old v1 tag)<br/>
+  Windows: prefer <strong>MSI</strong> or <strong>portable zip</strong> if SmartScreen nags · NSIS <code>.exe</code> also available<br/>
+  Linux: <code>.AppImage</code> · <code>.deb</code> (vault + hotkeys; capture is Windows-first)
 </p>
 
-> **Reviewers:** you do not need to build from source. Grab a prebuilt installer from [Releases](https://github.com/Ander507/SnipClip/releases/latest), install, then use the shortcuts below. Multi-monitor snip/record is supported.
+> **Reviewers:** grab [Releases → Latest](https://github.com/Ander507/SnipClip/releases/latest). Use the **`.msi`** or **portable `.zip`** if Defender/SmartScreen blocks the NSIS setup. Release notes include VirusTotal + SHA-256.
+
+## AI / tooling disclosure
+
+AI coding assistants (Cursor) helped with under **20%** of the work — mostly boilerplate, refactors, and docs. The rest is human-written and reviewed: clipboard monitor, capture pipeline, vault encryption, OCR wiring, and UI decisions. Treat the runnable builds + source as the source of truth, not commit co-author lines.
 
 ## Try it in 60 seconds
 
-1. [Download](https://github.com/Ander507/SnipClip/releases/latest) and run the installer (or unzip the portable build).
+1. [Download the latest release](https://github.com/Ander507/SnipClip/releases/latest) (MSI, portable zip, or NSIS).
 2. SnipClip sits in the system tray - no window until you need it.
-3. Copy something (text, a link, or an image). Press **`Ctrl+Shift+V`** to open the vault and see it saved.
-4. Press **`Alt+C`** anywhere to search recent clips and paste one without opening the full app.
-5. Press **`Ctrl+Shift+S`** to snip a region on **any monitor**, annotate, and save to the vault.
-6. Press **`Ctrl+Shift+R`** to record a region as MP4 or GIF, then trim/crop/mute in the built-in video editor.
+3. Copy something. Press **`Ctrl+Shift+V`** for the full vault, or **`Ctrl+Shift+D`** for the compact dock.
+4. Press **`Alt+C`** anywhere to search recent clips and paste.
+5. Press **`Ctrl+Shift+S`** to snip (hold **Shift** on release for OCR). In the editor: **`B`** = blur, **`R`** = blackout redact.
+6. Press **`Ctrl+Shift+R`** to record, then trim in the video editor.
 
-All shortcuts are configurable in Settings. If one is already taken by Windows (Win+V, Snipping Tool, Game Bar, etc.), SnipClip tells you instead of failing silently.
+All shortcuts are configurable in Settings. If one is already taken by Windows, SnipClip toasts instead of failing silently.
 
 ## Why SnipClip? (vs. Windows 11 Win+V)
 
@@ -41,22 +45,22 @@ Windows 11 ships a clipboard history (`Win+V`). It's a 25-item, cloud-synced, pl
 
 | Windows 11 `Win+V` | SnipClip |
 |---|---|
-| ~25 item cap, then it forgets | **Unlimited** local SQLite vault |
+| ~25 item cap, then it forgets | Local SQLite vault with a **max-history** cap you control; **pins never auto-trim** |
 | Cloud sync (Microsoft account) | **Local only** - your data stays on your machine |
 | Plain text + images | Text, links, code, math, images, screenshots, recordings |
 | No search | **FTS5 search** + `Alt+C` quick-paste palette |
 | No categories | All, Text, Images, Screenshots, Videos, Links, Pinned - **reorder/hide** in Settings |
-| No pinning beyond the cap | **Pin anything**, forever |
+| No pinning beyond the cap | **Pin anything**, forever — compact dock shows pins + last 10 |
 | No OCR | **Copy text from any image** (native Windows Media OCR, no bundled models) |
-| Full-screen snips only | **Multi-monitor** region capture + draw, blur, arrows, callouts |
+| Full-screen snips only | **Multi-monitor** region capture + draw, blur, **blackout redact**, arrows, callouts |
 | No recording | Region **MP4/GIF** + in-app trim/crop/mute + optional WASAPI desktop audio |
 | No editor | **In-app video editor** - trim, crop, mute, MP4↔GIF |
-| One theme | **Custom theme packs** + glassmorphic surfaces |
+| One theme | **Custom theme packs** + glassmorphic surfaces + **UI scale** |
 | Slow to open | **Tray-first**, instant hotkeys, signed auto-updates |
 | No ignore list | **Skip copies** from WhisperFlow, 1Password, Edge, etc. |
 | No auto-clear | **Schedule purge** of unpinned history (never / reboot / daily / weekly) |
-| No command palette | **`Alt+C`** quick paste over any app |
-| No math | **Auto-solve** copied arithmetic and swap the clipboard for the answer |
+| No command palette | **`Alt+C`** quick paste · **`Ctrl+Shift+D`** compact dock |
+| No math | **Opt-in** math badges (clipboard stays raw by default) |
 | No encryption | **Password-protected vault** (AES-256-GCM at rest, Argon2id key) |
 
 Everything in SnipClip runs locally in Rust: no cloud, no account, no telemetry. Win+V syncs your clipboard to Microsoft. SnipClip keeps yours on your machine.
@@ -66,11 +70,13 @@ Everything in SnipClip runs locally in Rust: no cloud, no account, no telemetry.
 | Action | Shortcut |
 |---|---|
 | Open vault | `Ctrl+Shift+V` |
+| Compact dock | `Ctrl+Shift+D` |
 | Quick paste palette | `Alt+C` |
 | Snip region | `Ctrl+Shift+S` |
 | Record region | `Ctrl+Shift+R` |
 
-Inside the vault: `↑↓` navigate, `Enter` copy, `P` pin, `Delete` remove, `1`-`7` switch tab
+Inside the vault: `↑↓` navigate, `Enter` copy, `P` pin, `Delete` remove, `1`-`7` switch tab  
+In snip editor: `B` blur · `R` blackout redact · `Ctrl+Z` undo
 
 ## Features
 
@@ -196,9 +202,11 @@ Published by [`.github/workflows/release.yml`](./.github/workflows/release.yml) 
 
 | Platform | Artifacts |
 |---|---|
-| **Windows** | Signed updater metadata + **NSIS `.exe`**, **`.msi`**, and **portable `.zip`** (`SnipClip.exe`, no install) |
+| **Windows** | **`.msi` (WiX)** · **portable `.zip`** · NSIS `.exe` · updater `latest.json` |
 | **Linux** | **`.AppImage`** and **`.deb`** |
 | **macOS** | Build from source today (no prebuilt `.dmg` in CI yet) |
+
+If Windows Defender / SmartScreen nags on the NSIS `.exe`, use the **`.msi`** or unzip the **portable** build instead. Installers are unsigned community builds (no UPX / packers). See the latest [GitHub Release](https://github.com/Ander507/SnipClip/releases/latest) for VirusTotal + SHA-256.
 
 Windows needs WebView2 (already present on most Windows 10/11 PCs). Auto-updates use `latest.json` from the GitHub release (installer builds).
 
@@ -221,7 +229,7 @@ Production build: `npm run tauri build`
 
 No environment variables or external database. FFmpeg is resolved/bundled via `ffmpeg-sidecar` for recording. The vault lives in your OS app-data directory.
 
-**Platform notes:** Windows has the full feature set (desktop-audio recording, OCR, GDI capture, multi-monitor overlays). Linux supports vault + capture on Wayland with the tools above.
+**Platform notes:** Windows has the full feature set (desktop-audio recording, OCR, GDI capture, multi-monitor overlays). Linux AppImage/deb builds run the **vault + hotkeys**; snip/record/OCR/WASAPI are Windows-first. Wayland capture needs extra tools (`grim`, `slurp`, `wl-clipboard`) and is not the High Seas review path — use a Windows VM or the portable zip for demos.
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history.
 

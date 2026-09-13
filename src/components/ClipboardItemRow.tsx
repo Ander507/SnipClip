@@ -23,6 +23,7 @@ import {
   languageLabel,
 } from "../lib/codeDetect";
 import { parseTranslatedContent } from "../lib/translatedContent";
+import { parseMathContent } from "../lib/mathContent";
 import { CodePreview } from "./CodePreview";
 import { SmartTextPreview } from "./SmartTextPreview";
 import { displayUrl, isLinkItem, linkHrefFromText } from "../lib/urls";
@@ -62,6 +63,8 @@ interface Props {
   onCopy: () => void;
   /** Copy the pre-translation source text (translated items only). */
   onCopyOriginal?: () => void;
+  /** Copy the evaluated math result without replacing the equation copy. */
+  onCopyMathResult?: () => void;
   onExtractText: () => void;
   onPin: () => void;
   onDelete: () => void;
@@ -79,6 +82,7 @@ export function ClipboardItemRow({
   onSelect,
   onCopy,
   onCopyOriginal,
+  onCopyMathResult,
   onExtractText,
   onPin,
   onDelete,
@@ -101,6 +105,7 @@ export function ClipboardItemRow({
   const isMath = item.contentType === "math";
   const isTranslated = item.contentType === "translated";
   const translatedParts = isTranslated ? parseTranslatedContent(textBody) : null;
+  const mathParts = isMath ? parseMathContent(item.content || "", item.preview || "") : null;
   const isLink =
     !isImage && !isVideo && !isMath && !isTranslated && !isCode && isLinkItem(item.contentType, textBody);
   const href = isLink ? linkHrefFromText(textBody) : null;
@@ -175,9 +180,26 @@ export function ClipboardItemRow({
             {item.preview || (item.contentType === "gif" ? "GIF recording" : "Video recording")}
           </p>
         ) : isMath ? (
-          <p className="truncate text-xs font-medium text-fg-secondary">
-            {item.content || item.preview || "Solved math"}
-          </p>
+          <div className="min-w-0 space-y-1">
+            <p className="truncate text-xs font-medium text-fg-secondary">
+              {mathParts?.expression || item.content || "Equation"}
+            </p>
+            {mathParts?.result && (
+              <button
+                type="button"
+                title="Copy result"
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition hover:brightness-110"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopyMathResult?.();
+                }}
+              >
+                <Sigma size={11} />
+                <span className="truncate">= {mathParts.result}</span>
+                <Copy size={10} className="shrink-0 opacity-70" />
+              </button>
+            )}
+          </div>
         ) : isTranslated ? (
           <div className="min-w-0 space-y-0.5">
             <p className="truncate text-xs font-medium text-fg-secondary">
@@ -362,6 +384,33 @@ export function ClipboardItemRow({
                     }}
                   >
                     <Type size={13} />
+                  </button>
+                )}
+              </>
+            ) : isMath ? (
+              <>
+                <button
+                  type="button"
+                  title="Copy equation"
+                  className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCopy();
+                  }}
+                >
+                  <Copy size={13} />
+                </button>
+                {onCopyMathResult && mathParts?.result && (
+                  <button
+                    type="button"
+                    title="Copy result"
+                    className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCopyMathResult();
+                    }}
+                  >
+                    <Sigma size={13} />
                   </button>
                 )}
               </>

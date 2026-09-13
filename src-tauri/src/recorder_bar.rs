@@ -79,6 +79,7 @@ pub fn show_recorder_bar(
 pub fn hide_recorder_bar(app: &AppHandle) -> Result<(), String> {
     pending_show().lock().take();
     if let Some(bar) = app.get_webview_window("recorder_bar") {
+        let _ = bar.emit("recorder-bar-hide", ());
         let _ = bar.hide();
     }
     Ok(())

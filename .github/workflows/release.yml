@@ -68,32 +68,73 @@ jobs:
           releaseBody: |
             ## What's New in ${{ github.ref_name }}
 
-            See [CHANGELOG.md](https://github.com/Ander507/SnipClip/blob/master/CHANGELOG.md) for the full list for this tag.
+            Full notes: [CHANGELOG.md](https://github.com/Ander507/SnipClip/blob/master/CHANGELOG.md).
 
             ### Highlights
 
-            - **Multi-monitor snip & record:** Per-display overlays with correct coordinates on secondary monitors (including negative desktop offsets).
-            - **In-app video editor:** Trim with lossless `-c copy` when possible, crop, mute, or export to GIF.
-            - **SQLite FTS5 command palette:** Fast prefix search on `Alt+C` across clipboard history.
-            - **Vault & capture studio:** Password-protected vault, OCR, math auto-solve, opt-in auto-translate, and tray-first hotkeys.
+            - **Compact dock** — slim Win+V-style vault (`Ctrl+Shift+D`): pins, last ten clips, always-on-top.
+            - **Opt-in math** — equation stays raw on the clipboard; vault shows a copyable `= result` badge.
+            - **Blackout redact** on snips (`R`) next to blur (`B`).
+            - **Max history + UI scale** — cap unpinned clips (50–1000) and zoom the vault chrome 90–125%.
+            - **Recorder bar reset** — Stop then record again opens at Start / `00:00`, not a stuck timer.
 
-            **Quick try:** install → copy something → `Ctrl+Shift+V` for the vault → `Alt+C` for the paste palette → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
+            **Quick try:** install → copy something → `Ctrl+Shift+V` or `Ctrl+Shift+D` → `Alt+C` to paste → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
 
-            ### Installation
+            ### Installation (pick one)
 
-            1. Download `SnipClip_*_x64-setup.exe` below (or the MSI / portable zip).
-            2. If Windows SmartScreen prompts on first run, click **More info** → **Run anyway**.
+            Prefer these if SmartScreen / antivirus is noisy:
 
-            - **Windows:** NSIS `.exe`, `.msi`, or portable `.zip` (unzip and run `SnipClip.exe`)
-            - **Linux:** `.AppImage` and `.deb`
+            1. **`.msi` (WiX)** — Windows Installer package (usually treated more calmly than NSIS self-extractors)
+            2. **Portable `.zip`** — unzip and run `SnipClip.exe` (no installer)
+            3. **NSIS `.exe`** — classic setup; fine for most people
 
-            WebView2 is required on Windows and is already on most Windows 10/11 PCs.
+            Linux: `.AppImage` or `.deb`. WebView2 is required on Windows (already on most Win10/11 PCs).
+
+            ### Antivirus & SmartScreen notice
+
+            SnipClip is **100% open-source** and built from Rust + Tauri source. This is an **unsigned community build** with clipboard monitoring, global hotkeys, and GDI screen capture — capabilities that heuristic models often score as generic PUA even when Microsoft Defender is clean.
+
+            - Prefer the **`.msi`** or **portable `.zip`** if the NSIS setup is flagged.
+            - Builds are **not** packed with UPX or other binary packers.
+            - SmartScreen workaround: **More info** → **Run anyway**, or clone the repo and run `npm run tauri build` yourself.
+            - After the Windows job finishes, this release gets an NSIS **SHA-256** and **VirusTotal** link appended below.
 
             The auto-updater uses `latest.json` from this release (installers only).
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      # Never add UPX or other packers here — they spike false-positive rates on VirusTotal.
+      - name: Append NSIS SHA-256 to release notes
+        if: matrix.platform == 'windows-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $exe) {
+            Write-Host "No NSIS setup.exe found — skip checksum"
+            exit 0
+          }
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $body = gh release view $tag --json body -q .body
+          if ($body -match [regex]::Escape($hash)) {
+            Write-Host "SHA already present in release notes"
+            exit 0
+          }
+          $extra = @"
+
+          - **SHA-256** (``$($exe.Name)``): ``$hash``
+          - **VirusTotal:** [Scan report](https://www.virustotal.com/gui/file/$hash) (upload the setup exe once if the page is empty)
+          "@
+          $combined = ($body.TrimEnd() + "`n" + $extra)
+          $tmp = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -Path $tmp -Value $combined -Encoding utf8
+          gh release edit $tag --notes-file $tmp
+          Write-Host "Appended SHA-256 $hash"
 
       - name: Package Windows portable zip
         if: matrix.platform == 'windows-latest'

@@ -7,6 +7,7 @@ import {
   Square,
   Circle,
   Droplets,
+  EyeOff,
   Hash,
   Copy,
   Save,
@@ -55,7 +56,8 @@ const TOOLS: { id: AnnotateTool; icon: typeof Pen; label: string }[] = [
   { id: "rect", icon: Square, label: "Rectangle" },
   { id: "circle", icon: Circle, label: "Circle" },
   { id: "highlight", icon: Highlighter, label: "Highlight" },
-  { id: "blur", icon: Droplets, label: "Blur" },
+  { id: "blur", icon: Droplets, label: "Blur secrets" },
+  { id: "redact", icon: EyeOff, label: "Blackout redact" },
   { id: "number", icon: Hash, label: "Callout" },
   { id: "eyedropper", icon: Pipette, label: "Color picker" },
 ];
@@ -183,7 +185,47 @@ function drawBlurRegion(
   ctx.restore();
 }
 
-const SHAPE_TOOLS: AnnotateTool[] = ["blur", "rect", "circle", "highlight", "arrow"];
+/** Solid blackout for API keys / passwords before sharing a snip. */
+function drawRedactRegion(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  ox: number,
+  oy: number,
+  scale: number
+) {
+  const left = Math.min(x, x + w);
+  const top = Math.min(y, y + h);
+  const dx = ox + left * scale;
+  const dy = oy + top * scale;
+  const dw = Math.abs(w) * scale;
+  const dh = Math.abs(h) * scale;
+  if (dw < 1 || dh < 1) return;
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(dx, dy, dw, dh);
+  // Stronger hatch + thin border so blackout is obvious on dark screenshots
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(dx, dy, dw, dh);
+  ctx.clip();
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = Math.max(1, scale);
+  const step = Math.max(5, 7 * scale);
+  for (let t = -dh; t < dw + dh; t += step) {
+    ctx.beginPath();
+    ctx.moveTo(dx + t, dy);
+    ctx.lineTo(dx + t + dh, dy + dh);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.strokeStyle = "rgba(255,80,80,0.55)";
+  ctx.lineWidth = Math.max(1.5, 2 * scale);
+  ctx.strokeRect(dx + 0.5, dy + 0.5, Math.max(0, dw - 1), Math.max(0, dh - 1));
+}
+
+const SHAPE_TOOLS: AnnotateTool[] = ["blur", "redact", "rect", "circle", "highlight", "arrow"];
 const WIDTH_TOOLS: AnnotateTool[] = ["pen", "arrow", "rect", "circle"];
 const FILL_TOOLS: AnnotateTool[] = ["rect", "circle"];
 
@@ -484,6 +526,18 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
         setPanX(0);
         setPanY(0);
       }
+
+      // Quick tools for privacy redact (no modifiers)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === "b" || e.key === "B") {
+          e.preventDefault();
+          setTool("blur");
+        }
+        if (e.key === "r" || e.key === "R") {
+          e.preventDefault();
+          setTool("redact");
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -618,13 +672,13 @@ export function SnipOverlay({ capture, onClose, onSaved }: Props) {
       color:
         tool === "highlight"
           ? "rgba(245,197,66,0.35)"
-          : tool === "blur"
+          : tool === "blur" || tool === "redact"
             ? "transparent"
             : tool === "number"
               ? "#60a5fa"
               : drawColor,
       width:
-        tool === "highlight" ? 18 : tool === "blur" ? 24 : lineWidth,
+        tool === "highlight" ? 18 : tool === "blur" || tool === "redact" ? 24 : lineWidth,
       points: [p],
       number: tool === "number" ? callout : undefined,
       blurStrength: tool === "blur" ? blurStrength : undefined,
@@ -1021,6 +1075,22 @@ function drawStroke(
     const h = Math.abs(b.y - a.y);
     const strength = s.blurStrength ?? globalBlurStrength ?? 16;
     drawBlurRegion(ctx, img, x, y, w, h, ox, oy, scale, strength);
+    return;
+  }
+
+  if (s.tool === "redact" && pts.length >= 2) {
+    const a = s.points[0];
+    const b = s.points[s.points.length - 1];
+    drawRedactRegion(
+      ctx,
+      a.x,
+      a.y,
+      b.x - a.x,
+      b.y - a.y,
+      ox,
+      oy,
+      scale
+    );
     return;
   }
 

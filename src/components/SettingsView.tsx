@@ -42,7 +42,7 @@ interface Props {
   onSaved: (settings: AppSettings) => void;
 }
 
-type CaptureTarget = "clipboard" | "snip" | "record" | null;
+type CaptureTarget = "clipboard" | "snip" | "record" | "dock" | null;
 
 const TAB_ORDER: { id: Category; label: string }[] = [
   { id: "all", label: "All" },
@@ -72,6 +72,12 @@ const RECORD_HOTKEY_PRESETS = [
   { label: "Ctrl + Alt + R", value: "Control+Alt+R" },
   { label: "Ctrl + Shift + R", value: "Control+Shift+R" },
   { label: "Ctrl + Alt + F10", value: "Control+Alt+F10" },
+] as const;
+
+const DOCK_HOTKEY_PRESETS = [
+  { label: "Ctrl + Shift + D", value: "Control+Shift+D" },
+  { label: "Alt + Shift + V", value: "Alt+Shift+V" },
+  { label: "Ctrl + Alt + D", value: "Control+Alt+D" },
 ] as const;
 
 function keyFromEvent(e: KeyboardEvent): string | null {
@@ -113,6 +119,7 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.hotkeyClipboard !== b.hotkeyClipboard ||
     a.hotkeySnip !== b.hotkeySnip ||
     a.hotkeyRecord !== b.hotkeyRecord ||
+    a.hotkeyDock !== b.hotkeyDock ||
     a.clearOnBoot !== b.clearOnBoot ||
     a.clearInterval !== b.clearInterval ||
     a.launchAtStartup !== b.launchAtStartup ||
@@ -132,7 +139,12 @@ function isDirty(a: AppSettings, b: AppSettings) {
     JSON.stringify(a.vaultPasswordSalt ?? []) !==
       JSON.stringify(b.vaultPasswordSalt ?? []) ||
     a.autoTranslateEnabled !== b.autoTranslateEnabled ||
-    a.autoTranslateTargetLang !== b.autoTranslateTargetLang
+    a.autoTranslateTargetLang !== b.autoTranslateTargetLang ||
+    a.autoEvalMath !== b.autoEvalMath ||
+    a.compactDock !== b.compactDock ||
+    a.mainAlwaysOnTop !== b.mainAlwaysOnTop ||
+    a.maxHistory !== b.maxHistory ||
+    a.uiScale !== b.uiScale
   );
 }
 
@@ -152,7 +164,13 @@ function normalizeSettings(s: AppSettings): AppSettings {
     vaultPasswordSalt: s.vaultPasswordSalt ?? null,
     autoTranslateEnabled: s.autoTranslateEnabled ?? false,
     autoTranslateTargetLang: s.autoTranslateTargetLang ?? "en",
+    autoEvalMath: s.autoEvalMath ?? false,
+    compactDock: s.compactDock ?? false,
+    mainAlwaysOnTop: s.mainAlwaysOnTop ?? false,
+    maxHistory: Math.min(1000, Math.max(50, s.maxHistory ?? 500)),
+    uiScale: Math.min(125, Math.max(90, s.uiScale ?? 100)),
     hotkeyRecord: s.hotkeyRecord ?? DEFAULT_SETTINGS.hotkeyRecord,
+    hotkeyDock: s.hotkeyDock ?? DEFAULT_SETTINGS.hotkeyDock,
   };
 }
 
@@ -236,6 +254,9 @@ export function SettingsView({ onClose, onSaved }: Props) {
       }
       if (captureRef.current === "record") {
         return { ...prev, hotkeyRecord: accel };
+      }
+      if (captureRef.current === "dock") {
+        return { ...prev, hotkeyDock: accel };
       }
       return { ...prev, hotkeySnip: accel };
     });
@@ -826,6 +847,32 @@ export function SettingsView({ onClose, onSaved }: Props) {
               </button>
             ))}
           </div>
+          <HotkeyRow
+            label="Compact dock"
+            hint="Default Ctrl + Shift + D — Win+V-style slim vault"
+            value={draft.hotkeyDock}
+            active={capturing === "dock"}
+            onCapture={() => setCapturing("dock")}
+          />
+          <div className="flex flex-wrap gap-2 px-1">
+            {DOCK_HOTKEY_PRESETS.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                onClick={() =>
+                  setDraft((prev) => (prev ? { ...prev, hotkeyDock: preset.value } : prev))
+                }
+                className={clsx(
+                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
+                  draft.hotkeyDock === preset.value
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-line bg-raised text-fg-muted hover:border-line-strong hover:text-fg"
+                )}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap gap-2 px-1">
             {STEALTH_SNIP_PRESETS.map((preset) => (
               <button
@@ -848,6 +895,101 @@ export function SettingsView({ onClose, onSaved }: Props) {
           {capturing && (
             <p className="text-[12px] text-accent">Listening for a shortcut… Esc to cancel</p>
           )}
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+            Compact dock
+          </h3>
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-[13px] text-fg-secondary">Start in compact dock</span>
+              <span className="text-[11px] text-fg-muted">
+                Slim Win+V-style vault: search, pins, and recent clips. Toggle anytime from the
+                title bar.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.compactDock}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, compactDock: e.target.checked } : prev
+                )
+              }
+              className="h-4 w-4 cursor-pointer rounded"
+            />
+          </label>
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-[13px] text-fg-secondary">Always on top</span>
+              <span className="text-[11px] text-fg-muted">
+                Keep the vault floating above other windows while you work.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.mainAlwaysOnTop}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, mainAlwaysOnTop: e.target.checked } : prev
+                )
+              }
+              className="h-4 w-4 cursor-pointer rounded"
+            />
+          </label>
+          <div className="rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="block text-[13px] text-fg-secondary">UI scale</span>
+                <span className="text-[11px] text-fg-muted">
+                  Make the vault denser or roomier (90–125%).
+                </span>
+              </div>
+              <span className="shrink-0 font-mono text-[12px] text-fg-muted">
+                {draft.uiScale}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={90}
+              max={125}
+              step={5}
+              value={draft.uiScale}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, uiScale: Number(e.target.value) } : prev
+                )
+              }
+              className="mt-3 h-1.5 w-full cursor-pointer accent-accent"
+            />
+          </div>
+          <div className="rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="block text-[13px] text-fg-secondary">Max clipboard history</span>
+                <span className="text-[11px] text-fg-muted">
+                  Unpinned items only (50–1000). Pins are never auto-trimmed.
+                </span>
+              </div>
+              <span className="shrink-0 font-mono text-[12px] text-fg-muted">
+                {draft.maxHistory}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={50}
+              max={1000}
+              step={50}
+              value={draft.maxHistory}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, maxHistory: Number(e.target.value) } : prev
+                )
+              }
+              className="mt-3 h-1.5 w-full cursor-pointer accent-accent"
+            />
+          </div>
         </section>
 
         <section className="space-y-3">
@@ -895,8 +1037,29 @@ export function SettingsView({ onClose, onSaved }: Props) {
 
         <section className="space-y-3">
           <h3 className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
-            Auto-translate
+            Clipboard extras
           </h3>
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-[13px] text-fg-secondary">
+                Auto-evaluate math equations
+              </span>
+              <span className="text-[11px] text-fg-muted">
+                Off by default. Keeps the raw equation on your clipboard and shows the answer as a
+                copyable badge in the vault.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.autoEvalMath}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, autoEvalMath: e.target.checked } : prev
+                )
+              }
+              className="h-4 w-4 cursor-pointer rounded"
+            />
+          </label>
           <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
             <div className="min-w-0">
               <span className="block text-[13px] text-fg-secondary">Translate copied text</span>

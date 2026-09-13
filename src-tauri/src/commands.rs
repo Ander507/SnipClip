@@ -581,6 +581,7 @@ pub fn update_settings(
     let hotkeys_changed = previous.hotkey_clipboard != settings.hotkey_clipboard
         || previous.hotkey_snip != settings.hotkey_snip
         || previous.hotkey_record != settings.hotkey_record
+        || previous.hotkey_dock != settings.hotkey_dock
         || previous.snip_delay_enabled != settings.snip_delay_enabled
         || previous.snip_delay_ms != settings.snip_delay_ms;
 
@@ -604,11 +605,25 @@ pub fn update_settings(
         }
     }
     db.save_settings(&settings)?;
+    if settings.max_history < previous.max_history {
+        // Shrinking the cap should drop overflow now, not only on the next insert
+        match db.prune_unpinned_to_limit(settings.max_history) {
+            Ok(n) if n > 0 => {
+                let _ = app.emit(
+                    "history-pruned",
+                    serde_json::json!({ "removed": n, "maxHistory": settings.max_history }),
+                );
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("history prune skipped: {e}"),
+        }
+    }
     clipboard::set_ignore_list(settings.ignore_list.clone());
     clipboard::configure_auto_translate(
         settings.auto_translate_enabled,
         &settings.auto_translate_target_lang,
     );
+    clipboard::configure_auto_eval_math(settings.auto_eval_math);
 
     #[cfg(desktop)]
     {

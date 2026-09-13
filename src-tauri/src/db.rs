@@ -8,6 +8,7 @@ pub const MAX_HISTORY: usize = 500;
 pub const DEFAULT_HOTKEY_CLIPBOARD: &str = "Control+Shift+V";
 pub const DEFAULT_HOTKEY_SNIP: &str = "Control+Shift+S";
 pub const DEFAULT_HOTKEY_RECORD: &str = "Control+Shift+R";
+pub const DEFAULT_HOTKEY_DOCK: &str = "Control+Shift+D";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +44,9 @@ pub struct AppSettings {
     pub hotkey_snip: String,
     #[serde(default = "default_hotkey_record")]
     pub hotkey_record: String,
+    /// Toggle compact dock (Win+V-style). Default Control+Shift+D.
+    #[serde(default = "default_hotkey_dock")]
+    pub hotkey_dock: String,
     /// Wipe unpinned items when a new OS boot is detected.
     pub clear_on_boot: bool,
     /// "never" | "reboot" | "daily" | "weekly"
@@ -91,6 +95,21 @@ pub struct AppSettings {
     /// ISO 639-1 target language (e.g. "en", "da"). Default English.
     #[serde(default = "default_auto_translate_target_lang")]
     pub auto_translate_target_lang: String,
+    /// When true, solvable arithmetic is stored as math with a result badge (clipboard stays raw).
+    #[serde(default)]
+    pub auto_eval_math: bool,
+    /// Slim Win+V-style vault layout (narrow floating card).
+    #[serde(default)]
+    pub compact_dock: bool,
+    /// Keep the main vault window above other apps.
+    #[serde(default)]
+    pub main_always_on_top: bool,
+    /// Max unpinned items retained (50–1000). Pinned items are never trimmed by this.
+    #[serde(default = "default_max_history")]
+    pub max_history: u32,
+    /// UI scale percent (90–125).
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: u32,
 }
 
 fn default_snip_delay_ms() -> u32 {
@@ -101,8 +120,28 @@ fn default_auto_translate_target_lang() -> String {
     "en".into()
 }
 
+fn default_max_history() -> u32 {
+    500
+}
+
+fn default_ui_scale() -> u32 {
+    100
+}
+
+fn clamp_max_history(n: u32) -> u32 {
+    n.clamp(50, 1000)
+}
+
+fn clamp_ui_scale(n: u32) -> u32 {
+    n.clamp(90, 125)
+}
+
 fn default_hotkey_record() -> String {
     DEFAULT_HOTKEY_RECORD.to_string()
+}
+
+fn default_hotkey_dock() -> String {
+    DEFAULT_HOTKEY_DOCK.to_string()
 }
 
 pub fn default_sidebar_tabs() -> Vec<String> {
@@ -157,6 +196,7 @@ impl Default for AppSettings {
             hotkey_clipboard: DEFAULT_HOTKEY_CLIPBOARD.to_string(),
             hotkey_snip: DEFAULT_HOTKEY_SNIP.to_string(),
             hotkey_record: DEFAULT_HOTKEY_RECORD.to_string(),
+            hotkey_dock: DEFAULT_HOTKEY_DOCK.to_string(),
             clear_on_boot: false,
             clear_interval: CLEAR_INTERVAL_NEVER.to_string(),
             last_cleanup: 0,
@@ -176,6 +216,11 @@ impl Default for AppSettings {
             vault_password_salt: None,
             auto_translate_enabled: false,
             auto_translate_target_lang: default_auto_translate_target_lang(),
+            auto_eval_math: false,
+            compact_dock: false,
+            main_always_on_top: false,
+            max_history: default_max_history(),
+            ui_scale: default_ui_scale(),
         }
     }
 }
@@ -399,6 +444,9 @@ impl Database {
         if self.get_setting("hotkey_record")?.is_none() {
             self.set_setting("hotkey_record", &defaults.hotkey_record)?;
         }
+        if self.get_setting("hotkey_dock")?.is_none() {
+            self.set_setting("hotkey_dock", &defaults.hotkey_dock)?;
+        }
         if self.get_setting("clear_on_boot")?.is_none() {
             self.set_setting("clear_on_boot", "0")?;
         }
@@ -543,6 +591,28 @@ impl Database {
                 }
             })
             .unwrap_or_else(default_auto_translate_target_lang);
+        let auto_eval_math = self
+            .get_setting("auto_eval_math")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let compact_dock = self
+            .get_setting("compact_dock")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let main_always_on_top = self
+            .get_setting("main_always_on_top")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let max_history = self
+            .get_setting("max_history")?
+            .and_then(|v| v.parse::<u32>().ok())
+            .map(clamp_max_history)
+            .unwrap_or_else(default_max_history);
+        let ui_scale = self
+            .get_setting("ui_scale")?
+            .and_then(|v| v.parse::<u32>().ok())
+            .map(clamp_ui_scale)
+            .unwrap_or_else(default_ui_scale);
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -553,6 +623,9 @@ impl Database {
             hotkey_record: self
                 .get_setting("hotkey_record")?
                 .unwrap_or_else(|| DEFAULT_HOTKEY_RECORD.to_string()),
+            hotkey_dock: self
+                .get_setting("hotkey_dock")?
+                .unwrap_or_else(|| DEFAULT_HOTKEY_DOCK.to_string()),
             clear_on_boot,
             clear_interval,
             last_cleanup,
@@ -572,6 +645,11 @@ impl Database {
             vault_password_salt,
             auto_translate_enabled,
             auto_translate_target_lang,
+            auto_eval_math,
+            compact_dock,
+            main_always_on_top,
+            max_history,
+            ui_scale,
         })
     }
 
@@ -579,6 +657,7 @@ impl Database {
         self.set_setting("hotkey_clipboard", &settings.hotkey_clipboard)?;
         self.set_setting("hotkey_snip", &settings.hotkey_snip)?;
         self.set_setting("hotkey_record", &settings.hotkey_record)?;
+        self.set_setting("hotkey_dock", &settings.hotkey_dock)?;
         self.set_setting(
             "clear_on_boot",
             if settings.clear_on_boot { "1" } else { "0" },
@@ -680,6 +759,26 @@ impl Database {
             }
         };
         self.set_setting("auto_translate_target_lang", &lang)?;
+        self.set_setting(
+            "auto_eval_math",
+            if settings.auto_eval_math { "1" } else { "0" },
+        )?;
+        self.set_setting(
+            "compact_dock",
+            if settings.compact_dock { "1" } else { "0" },
+        )?;
+        self.set_setting(
+            "main_always_on_top",
+            if settings.main_always_on_top { "1" } else { "0" },
+        )?;
+        self.set_setting(
+            "max_history",
+            &clamp_max_history(settings.max_history).to_string(),
+        )?;
+        self.set_setting(
+            "ui_scale",
+            &clamp_ui_scale(settings.ui_scale).to_string(),
+        )?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }
@@ -739,12 +838,42 @@ impl Database {
         Ok(should_clear)
     }
 
+    /// Drop oldest unpinned items until count fits `max_history`. Pins are never removed.
+    pub fn prune_unpinned_to_limit(&self, max_history: u32) -> Result<u32, String> {
+        let limit = clamp_max_history(max_history) as i64;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let deleted = conn
+            .execute(
+                "DELETE FROM items WHERE id IN (
+                    SELECT id FROM items WHERE is_pinned = 0
+                    ORDER BY created_at DESC
+                    LIMIT -1 OFFSET ?1
+                )",
+                params![limit],
+            )
+            .map_err(|e| e.to_string())? as u32;
+        if deleted > 0 {
+            let _ = conn.execute(
+                "DELETE FROM items_fts WHERE rowid NOT IN (SELECT id FROM items)",
+                [],
+            );
+        }
+        Ok(deleted)
+    }
+
     pub fn insert(
         &self,
         content_type: &str,
         content: &str,
         preview: &str,
     ) -> Result<ClipboardItem, String> {
+        // Read cap before taking the items lock (get_setting uses the same mutex)
+        let max_history = self
+            .get_setting("max_history")?
+            .and_then(|v| v.parse::<u32>().ok())
+            .map(clamp_max_history)
+            .unwrap_or_else(default_max_history) as i64;
+
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
 
         let last: Vec<(String, String)> = conn
@@ -778,7 +907,7 @@ impl Database {
                 ORDER BY created_at DESC
                 LIMIT -1 OFFSET ?1
             )",
-            params![MAX_HISTORY as i64],
+            params![max_history],
         ) {
             // Row is already inserted — don't fail the whole write or the UI never sees it.
             eprintln!("history trim skipped: {e}");
@@ -942,7 +1071,7 @@ impl Database {
                      FROM items_fts f
                      JOIN items i ON i.id = f.rowid
                      WHERE f MATCH ?1
-                     ORDER BY i.created_at DESC
+                     ORDER BY i.is_pinned DESC, i.created_at DESC
                      LIMIT 10",
                 )
                 .map_err(|e| e.to_string())?;

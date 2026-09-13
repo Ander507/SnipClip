@@ -29,13 +29,20 @@ import {
   openVideoEditor,
   getCategoryCounts,
   copyText,
+  updateSettings,
 } from "./lib/api";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
-import { applyTheme } from "./lib/theme";
+import { applyTheme, applyUiScale } from "./lib/theme";
 import { itemMatchesCategory, itemMatchesSearch } from "./lib/search";
 import { useStatusToast } from "./lib/useStatusToast";
 import { parseTranslatedContent } from "./lib/translatedContent";
+import { parseMathContent } from "./lib/mathContent";
+import {
+  applyCompactDockLayout,
+  applyStudioLayout,
+  setMainAlwaysOnTop,
+} from "./lib/compactDock";
 
 interface ScreenshotEditorRequest {
   vaultId: number;
@@ -118,9 +125,20 @@ function App() {
           sidebarTabs: s.sidebarTabs ?? DEFAULT_SETTINGS.sidebarTabs,
           autoTranslateEnabled: s.autoTranslateEnabled ?? false,
           autoTranslateTargetLang: s.autoTranslateTargetLang ?? "en",
+          autoEvalMath: s.autoEvalMath ?? false,
+          compactDock: s.compactDock ?? false,
+          mainAlwaysOnTop: s.mainAlwaysOnTop ?? false,
+          maxHistory: s.maxHistory ?? 500,
+          uiScale: s.uiScale ?? 100,
+          hotkeyDock: s.hotkeyDock ?? DEFAULT_SETTINGS.hotkeyDock,
         };
         setSettings(next);
         applyTheme(next);
+        applyUiScale(next.uiScale);
+        void setMainAlwaysOnTop(next.mainAlwaysOnTop).catch(console.error);
+        if (next.compactDock) {
+          void applyCompactDockLayout().catch(console.error);
+        }
       })
       .catch(console.error);
     void getClipboardPaused().then(setClipboardPaused).catch(console.error);
@@ -213,6 +231,15 @@ function App() {
         preview ? `Translated → ${lang}: ${preview}` : `Translated → ${lang}`,
         2800
       );
+      void refreshCounts();
+    }).then((u) => unsubs.push(u));
+
+    void listen<{ expression?: string; result?: string }>("math-solved", (event) => {
+      const expr = event.payload?.expression?.trim();
+      const result = event.payload?.result?.trim();
+      if (expr && result) {
+        setStatus(`Math: ${expr} → ${result} (clipboard unchanged)`, 2400);
+      }
       void refreshCounts();
     }).then((u) => unsubs.push(u));
 
@@ -334,6 +361,102 @@ function App() {
       setStatus(String(err), 1600);
     }
   }
+
+  async function handleCopyMathResult(id: number) {
+    try {
+      const item =
+        items.find((i) => i.id === id) ?? (await getItem(id));
+      if (!item) {
+        setStatus("Item no longer available", 1600);
+        return;
+      }
+      const { result } = parseMathContent(item.content || "", item.preview || "");
+      if (!result) {
+        setStatus("No result to copy", 1600);
+        return;
+      }
+      await copyText(result);
+      setStatus("Copied result", 1200);
+    } catch (err) {
+      setStatus(String(err), 1600);
+    }
+  }
+
+  async function persistWindowPrefs(patch: Partial<AppSettings>) {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    try {
+      const saved = await updateSettings(next);
+      setSettings({
+        ...saved,
+        autoEvalMath: saved.autoEvalMath ?? false,
+        compactDock: saved.compactDock ?? false,
+        mainAlwaysOnTop: saved.mainAlwaysOnTop ?? false,
+      });
+    } catch (err) {
+      console.error(err);
+      setStatus(String(err), 2000);
+    }
+  }
+
+  async function handleToggleCompact() {
+    const next = !settings.compactDock;
+    if (next) {
+      await applyCompactDockLayout().catch(console.error);
+      if (!settings.mainAlwaysOnTop) {
+        await setMainAlwaysOnTop(true).catch(console.error);
+        await persistWindowPrefs({ compactDock: true, mainAlwaysOnTop: true });
+        return;
+      }
+    } else {
+      await applyStudioLayout().catch(console.error);
+    }
+    await persistWindowPrefs({ compactDock: next });
+  }
+
+  async function handleToggleAlwaysOnTop() {
+    const next = !settings.mainAlwaysOnTop;
+    await setMainAlwaysOnTop(next).catch(console.error);
+    await persistWindowPrefs({ mainAlwaysOnTop: next });
+  }
+
+  const toggleDockRef = useRef(handleToggleCompact);
+  toggleDockRef.current = handleToggleCompact;
+
+  useEffect(() => {
+    let unlistenDock: (() => void) | undefined;
+    let unlistenPrune: (() => void) | undefined;
+    void listen("toggle-compact-dock", () => {
+      void toggleDockRef.current();
+    }).then((u) => {
+      unlistenDock = u;
+    });
+    void listen<{ removed?: number; maxHistory?: number }>("history-pruned", (event) => {
+      const n = event.payload?.removed ?? 0;
+      const cap = event.payload?.maxHistory;
+      if (n > 0) {
+        setStatus(
+          `Trimmed ${n} unpinned item${n === 1 ? "" : "s"}${cap ? ` (cap ${cap})` : ""}`,
+          2800
+        );
+        void refresh();
+        void refreshCounts();
+      }
+    }).then((u) => {
+      unlistenPrune = u;
+    });
+    return () => {
+      unlistenDock?.();
+      unlistenPrune?.();
+    };
+  }, [refresh, refreshCounts]);
+
+  const dockItems = settings.compactDock
+    ? [
+        ...items.filter((i) => i.isPinned),
+        ...items.filter((i) => !i.isPinned).slice(0, 10),
+      ]
+    : items;
 
   async function handlePin(id: number) {
     try {
@@ -472,6 +595,14 @@ function App() {
   }
 
   useEffect(() => {
+    function navItems() {
+      if (!settings.compactDock) return items;
+      return [
+        ...items.filter((i) => i.isPinned),
+        ...items.filter((i) => !i.isPinned).slice(0, 10),
+      ];
+    }
+
     function onKey(e: KeyboardEvent) {
       if (capture || view === "settings") return;
       const tag = (e.target as HTMLElement)?.tagName;
@@ -496,9 +627,10 @@ function App() {
       if (e.key === "ArrowDown" || e.key === "j") {
         if (e.key === "j" && inInput) return;
         e.preventDefault();
+        const list = navItems();
         setSelectedId((cur) => {
-          const idx = items.findIndex((i) => i.id === cur);
-          const next = items[Math.min(items.length - 1, Math.max(0, idx + 1))];
+          const idx = list.findIndex((i) => i.id === cur);
+          const next = list[Math.min(list.length - 1, Math.max(0, idx + 1))];
           return next?.id ?? cur;
         });
       }
@@ -506,9 +638,10 @@ function App() {
       if (e.key === "ArrowUp" || e.key === "k") {
         if (e.key === "k" && inInput) return;
         e.preventDefault();
+        const list = navItems();
         setSelectedId((cur) => {
-          const idx = items.findIndex((i) => i.id === cur);
-          const next = items[Math.max(0, (idx < 0 ? 0 : idx) - 1)];
+          const idx = list.findIndex((i) => i.id === cur);
+          const next = list[Math.max(0, (idx < 0 ? 0 : idx) - 1)];
           return next?.id ?? cur;
         });
       }
@@ -550,7 +683,7 @@ function App() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, capture, view, counts, settings.sidebarTabs]);
+  }, [items, capture, view, counts, settings.sidebarTabs, settings.compactDock]);
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-app text-fg">
@@ -559,32 +692,53 @@ function App() {
         onTogglePause={() => {
           void toggleClipboardPaused().then(setClipboardPaused).catch(console.error);
         }}
+        compactDock={settings.compactDock}
+        alwaysOnTop={settings.mainAlwaysOnTop}
+        onToggleCompact={() => void handleToggleCompact()}
+        onToggleAlwaysOnTop={() => void handleToggleAlwaysOnTop()}
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <Sidebar
-          category={category}
-          onCategory={(c) => {
-            setCategory(c);
-            setView("vault");
-          }}
-          onSnip={() => void startSnip()}
-          onDelayedSnip={() => void startDelayedSnip(3000)}
-          onClear={() => void handleClear()}
-          onSettings={() => setView("settings")}
-          settingsOpen={view === "settings"}
-          count={counts.all ?? items.length}
-          counts={counts}
-          sidebarTabs={settings.sidebarTabs}
-          snipHotkeyLabel={formatHotkeyShort(settings.hotkeySnip)}
-          snipDelayEnabled={settings.snipDelayEnabled}
-        />
+        {!settings.compactDock && (
+          <Sidebar
+            category={category}
+            onCategory={(c) => {
+              setCategory(c);
+              setView("vault");
+            }}
+            onSnip={() => void startSnip()}
+            onDelayedSnip={() => void startDelayedSnip(3000)}
+            onClear={() => void handleClear()}
+            onSettings={() => setView("settings")}
+            settingsOpen={view === "settings"}
+            count={counts.all ?? items.length}
+            counts={counts}
+            sidebarTabs={settings.sidebarTabs}
+            snipHotkeyLabel={formatHotkeyShort(settings.hotkeySnip)}
+            snipDelayEnabled={settings.snipDelayEnabled}
+          />
+        )}
         <main className="flex min-w-0 flex-1 flex-col bg-app">
           {view === "settings" ? (
             <SettingsView
               onClose={() => setView("vault")}
               onSaved={(s) => {
-                setSettings(s);
-                applyTheme(s);
+                const next = {
+                  ...s,
+                  autoEvalMath: s.autoEvalMath ?? false,
+                  compactDock: s.compactDock ?? false,
+                  mainAlwaysOnTop: s.mainAlwaysOnTop ?? false,
+                  maxHistory: s.maxHistory ?? 500,
+                  uiScale: s.uiScale ?? 100,
+                };
+                setSettings(next);
+                applyTheme(next);
+                applyUiScale(next.uiScale);
+                void setMainAlwaysOnTop(next.mainAlwaysOnTop).catch(console.error);
+                if (next.compactDock) {
+                  void applyCompactDockLayout().catch(console.error);
+                } else {
+                  void applyStudioLayout().catch(console.error);
+                }
               }}
             />
           ) : (
@@ -592,19 +746,47 @@ function App() {
               <div className="border-b border-line px-4 py-3">
                 <SearchBar ref={searchRef} value={query} onChange={setQuery} />
                 <p className="mt-2 text-[11px] text-fg-faint">
-                  ↑↓ navigate · Enter copy ·{" "}
-                  {formatHotkeyShort(settings.hotkeyClipboard)} toggle
-                  {clipboardPaused ? " · listening paused" : ""} · 1–9 switch tab
+                  {settings.compactDock
+                    ? "Pins + last 10 · ↑↓ navigate · Enter copy · Pin locks favorites"
+                    : `↑↓ navigate · Enter copy · ${formatHotkeyShort(settings.hotkeyClipboard)} toggle${
+                        clipboardPaused ? " · listening paused" : ""
+                      } · 1–9 switch tab`}
                 </p>
+                {settings.compactDock && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void startSnip()}
+                      className="rounded-md border border-line px-2 py-1 text-[11px] text-fg-secondary hover:bg-hover"
+                    >
+                      Snip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setView("settings")}
+                      className="rounded-md border border-line px-2 py-1 text-[11px] text-fg-secondary hover:bg-hover"
+                    >
+                      Settings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleCompact()}
+                      className="rounded-md border border-accent/40 bg-accent-soft px-2 py-1 text-[11px] text-accent"
+                    >
+                      Full studio
+                    </button>
+                  </div>
+                )}
               </div>
               <ClipboardList
-                items={items}
+                items={dockItems}
                 selectedId={selectedId}
                 hotkeySnip={formatHotkeyShort(settings.hotkeySnip)}
                 hotkeyPalette="Alt+C"
                 onSelect={setSelectedId}
                 onCopy={(id) => void handleCopy(id)}
                 onCopyOriginal={(id) => void handleCopyOriginal(id)}
+                onCopyMathResult={(id) => void handleCopyMathResult(id)}
                 onExtractText={(id) => void handleExtractText(id)}
                 onPin={(id) => void handlePin(id)}
                 onDelete={(id) => void handleDelete(id)}

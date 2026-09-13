@@ -86,6 +86,10 @@ pub fn configure_auto_translate(enabled: bool, target_lang: &str) {
     crate::translate::configure(enabled, target_lang);
 }
 
+pub fn configure_auto_eval_math(enabled: bool) {
+    crate::math::configure(enabled);
+}
+
 fn process_is_ignored(process: &str, list: &[String]) -> bool {
     let proc = process.to_lowercase();
     let stem = std::path::Path::new(&proc)
@@ -246,6 +250,41 @@ fn read_clipboard_snapshot() -> Result<(Option<String>, Option<ImageData<'static
     })
 }
 
+fn insert_classified_text(app: &AppHandle, db: &Arc<Database>, text: &str) {
+    let (ctype, preview) = classify_text(text);
+    if ctype == "text" {
+        if let Some(tr) = crate::translate::try_translate(text) {
+            let tr_preview: String = format!(
+                "→{} · {}",
+                tr.target_lang.to_ascii_uppercase(),
+                tr.translated.chars().take(100).collect::<String>()
+            );
+            // Keep original under the translation so search still finds either.
+            let content = format!(
+                "{}\n\n——— original ———\n{}",
+                tr.translated.trim(),
+                text.trim()
+            );
+            if let Ok(item) = db.insert("translated", &content, &tr_preview) {
+                let _ = app.emit("clipboard-item", &item.for_event());
+                let _ = app.emit(
+                    "auto-translated",
+                    serde_json::json!({
+                        "targetLang": tr.target_lang,
+                        "preview": tr.translated.chars().take(80).collect::<String>(),
+                    }),
+                );
+            } else if let Ok(item) = db.insert(ctype, text, &preview) {
+                let _ = app.emit("clipboard-item", &item.for_event());
+            }
+        } else if let Ok(item) = db.insert(ctype, text, &preview) {
+            let _ = app.emit("clipboard-item", &item.for_event());
+        }
+    } else if let Ok(item) = db.insert(ctype, text, &preview) {
+        let _ = app.emit("clipboard-item", &item.for_event());
+    }
+}
+
 fn process_clipboard_snapshot(
     app: &AppHandle,
     db: &Arc<Database>,
@@ -259,52 +298,24 @@ fn process_clipboard_snapshot(
         if Some(&text) != last_text.as_ref() {
             *last_text = Some(text.clone());
             if !skip_insert {
-                // solving copied arithmetic and swapping the clipboard to the answer
-                if let Some((expr, result)) = crate::math::try_solve(&text) {
-                    let content = format!("{expr} = {result}");
-                    let preview: String = content.chars().take(120).collect();
-                    if let Ok(item) = db.insert("math", &content, &preview) {
-                        let _ = app.emit("clipboard-item", &item.for_event());
-                        let _ = app.emit(
-                            "math-solved",
-                            serde_json::json!({ "expression": expr, "result": result }),
-                        );
-                        let _ = write_text_to_clipboard(&result);
-                        *last_text = Some(result);
+                // keeping raw clipboard contents untouched while showing calculated math as an auxiliary badge
+                if crate::math::is_enabled() {
+                    if let Some((expr, result)) = crate::math::try_solve(&text) {
+                        let content = text.trim().to_string();
+                        let preview = format!("= {result}");
+                        if let Ok(item) = db.insert("math", &content, &preview) {
+                            let _ = app.emit("clipboard-item", &item.for_event());
+                            let _ = app.emit(
+                                "math-solved",
+                                serde_json::json!({ "expression": expr, "result": result }),
+                            );
+                        }
+                        // Fall through? No — math handled; skip normal insert
+                    } else {
+                        insert_classified_text(app, db, &text);
                     }
                 } else {
-                    let (ctype, preview) = classify_text(&text);
-                    if ctype == "text" {
-                        if let Some(tr) = crate::translate::try_translate(&text) {
-                            let tr_preview: String = format!(
-                                "→{} · {}",
-                                tr.target_lang.to_ascii_uppercase(),
-                                tr.translated.chars().take(100).collect::<String>()
-                            );
-                            // Keep original under the translation so search still finds either.
-                            let content = format!(
-                                "{}\n\n——— original ———\n{}",
-                                tr.translated.trim(),
-                                text.trim()
-                            );
-                            if let Ok(item) = db.insert("translated", &content, &tr_preview) {
-                                let _ = app.emit("clipboard-item", &item.for_event());
-                                let _ = app.emit(
-                                    "auto-translated",
-                                    serde_json::json!({
-                                        "targetLang": tr.target_lang,
-                                        "preview": tr.translated.chars().take(80).collect::<String>(),
-                                    }),
-                                );
-                            } else if let Ok(item) = db.insert(ctype, &text, &preview) {
-                                let _ = app.emit("clipboard-item", &item.for_event());
-                            }
-                        } else if let Ok(item) = db.insert(ctype, &text, &preview) {
-                            let _ = app.emit("clipboard-item", &item.for_event());
-                        }
-                    } else if let Ok(item) = db.insert(ctype, &text, &preview) {
-                        let _ = app.emit("clipboard-item", &item.for_event());
-                    }
+                    insert_classified_text(app, db, &text);
                 }
             }
         }
@@ -378,6 +389,7 @@ pub fn start_monitor(app: AppHandle) {
                 settings.auto_translate_enabled,
                 &settings.auto_translate_target_lang,
             );
+            configure_auto_eval_math(settings.auto_eval_math);
         }
     }
 

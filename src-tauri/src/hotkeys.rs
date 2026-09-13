@@ -9,6 +9,7 @@ pub struct HotkeyState {
     pub clipboard: Mutex<String>,
     pub snip: Mutex<String>,
     pub record: Mutex<String>,
+    pub dock: Mutex<String>,
     pub snip_delay_enabled: Mutex<bool>,
     pub snip_delay_ms: Mutex<u32>,
 }
@@ -19,6 +20,7 @@ impl HotkeyState {
             clipboard: Mutex::new(settings.hotkey_clipboard.clone()),
             snip: Mutex::new(settings.hotkey_snip.clone()),
             record: Mutex::new(settings.hotkey_record.clone()),
+            dock: Mutex::new(settings.hotkey_dock.clone()),
             snip_delay_enabled: Mutex::new(settings.snip_delay_enabled),
             snip_delay_ms: Mutex::new(settings.snip_delay_ms),
         }
@@ -86,25 +88,31 @@ pub fn validate_snip_hotkey(s: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn register_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
-    let clip = parse_hotkey(&settings.hotkey_clipboard)?;
-    validate_snip_hotkey(&settings.hotkey_snip)?;
-    validate_snip_hotkey(&settings.hotkey_record)?;
-    let snip = parse_hotkey(&settings.hotkey_snip)?;
-    let record = parse_hotkey(&settings.hotkey_record)?;
-    let palette = parse_hotkey(crate::command_palette::palette_hotkey_string())?;
-
-    let keys = [&clip, &snip, &record, &palette];
+fn assert_unique(keys: &[&Shortcut]) -> Result<(), String> {
     for (i, a) in keys.iter().enumerate() {
         for b in keys.iter().skip(i + 1) {
             if a == b {
                 return Err(
-                    "Clipboard, Snip, Record, and Command Palette hotkeys must all be different"
+                    "Clipboard, Snip, Record, Dock, and Command Palette hotkeys must all be different"
                         .into(),
                 );
             }
         }
     }
+    Ok(())
+}
+
+pub fn register_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+    let clip = parse_hotkey(&settings.hotkey_clipboard)?;
+    validate_snip_hotkey(&settings.hotkey_snip)?;
+    validate_snip_hotkey(&settings.hotkey_record)?;
+    validate_snip_hotkey(&settings.hotkey_dock)?;
+    let snip = parse_hotkey(&settings.hotkey_snip)?;
+    let record = parse_hotkey(&settings.hotkey_record)?;
+    let dock = parse_hotkey(&settings.hotkey_dock)?;
+    let palette = parse_hotkey(crate::command_palette::palette_hotkey_string())?;
+
+    assert_unique(&[&clip, &snip, &record, &dock, &palette])?;
 
     app.global_shortcut()
         .register(clip)
@@ -114,6 +122,10 @@ pub fn register_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), S
         e.to_string()
     })?;
     app.global_shortcut().register(record).map_err(|e| {
+        let _ = app.global_shortcut().unregister_all();
+        e.to_string()
+    })?;
+    app.global_shortcut().register(dock).map_err(|e| {
         let _ = app.global_shortcut().unregister_all();
         e.to_string()
     })?;
@@ -134,15 +146,18 @@ pub fn apply_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), Stri
     let _ = parse_hotkey(&settings.hotkey_clipboard)?;
     validate_snip_hotkey(&settings.hotkey_snip)?;
     validate_snip_hotkey(&settings.hotkey_record)?;
+    validate_snip_hotkey(&settings.hotkey_dock)?;
     let _ = parse_hotkey(&settings.hotkey_snip)?;
     let _ = parse_hotkey(&settings.hotkey_record)?;
+    let _ = parse_hotkey(&settings.hotkey_dock)?;
 
     let clip = normalize_accelerator(&settings.hotkey_clipboard);
     let snip = normalize_accelerator(&settings.hotkey_snip);
     let record = normalize_accelerator(&settings.hotkey_record);
+    let dock = normalize_accelerator(&settings.hotkey_dock);
     let palette_norm = normalize_accelerator(crate::command_palette::palette_hotkey_string());
 
-    let keys = [&clip, &snip, &record, &palette_norm];
+    let keys = [&clip, &snip, &record, &dock, &palette_norm];
     for (i, a) in keys.iter().enumerate() {
         for b in keys.iter().skip(i + 1) {
             if a == b {
@@ -158,6 +173,7 @@ pub fn apply_hotkeys(app: &AppHandle, settings: &AppSettings) -> Result<(), Stri
         *state.clipboard.lock() = settings.hotkey_clipboard.clone();
         *state.snip.lock() = settings.hotkey_snip.clone();
         *state.record.lock() = settings.hotkey_record.clone();
+        *state.dock.lock() = settings.hotkey_dock.clone();
         *state.snip_delay_enabled.lock() = settings.snip_delay_enabled;
         *state.snip_delay_ms.lock() = settings.snip_delay_ms;
     }
@@ -172,12 +188,13 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
                     return;
                 }
 
-                let (clip_str, snip_str, record_str, snip_delay_enabled, snip_delay_ms) =
+                let (clip_str, snip_str, record_str, dock_str, snip_delay_enabled, snip_delay_ms) =
                     if let Some(state) = app.try_state::<Arc<HotkeyState>>() {
                         (
                             state.clipboard.lock().clone(),
                             state.snip.lock().clone(),
                             state.record.lock().clone(),
+                            state.dock.lock().clone(),
                             *state.snip_delay_enabled.lock(),
                             *state.snip_delay_ms.lock(),
                         )
@@ -187,6 +204,7 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
                             defaults.hotkey_clipboard,
                             defaults.hotkey_snip,
                             defaults.hotkey_record,
+                            defaults.hotkey_dock,
                             defaults.snip_delay_enabled,
                             defaults.snip_delay_ms,
                         )
@@ -199,6 +217,9 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
                     return;
                 };
                 let Ok(record) = parse_hotkey(&record_str) else {
+                    return;
+                };
+                let Ok(dock) = parse_hotkey(&dock_str) else {
                     return;
                 };
                 let Ok(palette) = parse_hotkey(crate::command_palette::palette_hotkey_string())
@@ -217,6 +238,10 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
                     }
                 } else if *shortcut == record {
                     let _ = crate::commands::begin_snip(app.clone(), Some("record".into()));
+                } else if *shortcut == dock {
+                    // Show vault then flip compact dock from the React side
+                    let _ = crate::commands::show_main_window(app.clone());
+                    let _ = app.emit("toggle-compact-dock", ());
                 } else if *shortcut == palette {
                     let _ = crate::command_palette::toggle_command_palette(app);
                 }

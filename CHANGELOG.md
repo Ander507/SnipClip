@@ -4,6 +4,25 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.5.5] — 2026-09-13
+
+### Vault
+
+- **Compact dock:** slim Win+V-style vault from the title bar or **`Ctrl+Shift+D`** — pins first, last ten clips, always-on-top.
+- **Opt-in math:** off by default; raw equation stays on the clipboard, vault shows a copyable `= result` badge.
+- **Max history:** 50–1000 in Settings; shrinking the cap prunes unpinned items right away (pins stay).
+- **UI scale:** 90–125% for denser or roomier chrome.
+- **Search:** pinned clips float to the top of FTS / palette results.
+
+### Capture
+
+- **Blackout redact** on snips (`R`) beside blur (`B`) — solid cover for secrets before you share.
+- **Second recording no longer opens mid-session:** recorder bar remounts clean after Stop so you get Start / `00:00` again.
+
+### Docs / trust
+
+- README points reviewers at `/releases/latest`, MSI/portable first when SmartScreen nags, and an honest AI tooling note.
+
 ## [1.5.4] — 2026-09-06
 
 ### Capture

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Pause, Play, Square, Volume2, VolumeX } from "lucide-react";
 import {
   hideRecorderBar,
@@ -47,6 +47,15 @@ export function RecordControls({
   const [status, setStatus] = useState<string | null>(null);
   const tickRef = useRef<number | undefined>(undefined);
   const safeRegion = useMemo(() => sanitizeRecordRegion(region), [region]);
+
+  useEffect(() => {
+    return () => {
+      if (tickRef.current) {
+        window.clearInterval(tickRef.current);
+        tickRef.current = undefined;
+      }
+    };
+  }, []);
 
   async function handleStart() {
     if (recording || busy) return;
@@ -102,11 +111,24 @@ export function RecordControls({
     try {
       const path = await stopRegionRecording();
       setStatus(null);
+      setRecording(false);
+      setPaused(false);
+      setElapsed(0);
       await hideRecorderBar();
       onStopped(path, format, safeRegion.physW, safeRegion.physH);
     } catch (err) {
+      const message = String(err);
       setStatus(null);
-      onError(String(err));
+      // Backend already idle (e.g. prior stop succeeded) — don't leave Start stuck as Stop.
+      if (message.toLowerCase().includes("no active recording")) {
+        setRecording(false);
+        setPaused(false);
+        setElapsed(0);
+        setBusy(false);
+        await hideRecorderBar().catch(() => undefined);
+        return;
+      }
+      onError(message);
       setBusy(false);
     }
   }

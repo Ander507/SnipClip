@@ -20,6 +20,7 @@ interface Props {
   onSelect: (id: number) => void;
   onCopy: (id: number) => void;
   onCopyOriginal?: (id: number) => void;
+  onCopyMathResult?: (id: number) => void;
   onExtractText: (id: number) => void;
   onPin: (id: number) => void;
   onDelete: (id: number) => void;
@@ -38,6 +39,7 @@ export function ClipboardList({
   onSelect,
   onCopy,
   onCopyOriginal,
+  onCopyMathResult,
   onExtractText,
   onPin,
   onDelete,
@@ -68,7 +70,7 @@ export function ClipboardList({
         return EDIT_BASE_HEIGHT + editLines * EDIT_LINE_HEIGHT + ROW_GAP;
       }
       const base =
-        item.contentType === "translated"
+        item.contentType === "translated" || item.contentType === "math"
           ? 92
           : isCodeSnippet(item.content || item.preview, item.contentType)
             ? CODE_ROW_HEIGHT
@@ -131,6 +133,9 @@ export function ClipboardList({
                 onCopy={() => onCopy(item.id)}
                 onCopyOriginal={
                   onCopyOriginal ? () => onCopyOriginal(item.id) : undefined
+                }
+                onCopyMathResult={
+                  onCopyMathResult ? () => onCopyMathResult(item.id) : undefined
                 }
                 onExtractText={() => onExtractText(item.id)}
                 onPin={() => onPin(item.id)}

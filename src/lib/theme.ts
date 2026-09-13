@@ -305,6 +305,16 @@ export function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
+/** Zoom the whole vault chrome (90–125%). Snip overlays stay independent. */
+export function applyUiScale(percent: number) {
+  const scale = Math.min(125, Math.max(90, Math.round(percent || 100))) / 100;
+  document.documentElement.style.setProperty("--sc-ui-scale", String(scale));
+  const root = document.getElementById("root");
+  if (root) {
+    root.style.zoom = String(scale);
+  }
+}
+
 export function settingsToThemePack(
   name: string,
   settings: ThemeApplyInput & { themeCustom?: ThemeCustomColors | null },
