@@ -427,3 +427,11 @@ export function formatHotkeyShort(accel: string): string {
     .replace(/Alt/gi, "⌥")
     .replace(/\+/g, "");
 }
+
+/** Readable accelerator for UI copy (Ctrl+Shift+D). */
+export function formatHotkeyLabel(accel: string): string {
+  return accel
+    .replace(/CommandOrControl/gi, "Ctrl")
+    .replace(/Control/gi, "Ctrl")
+    .replace(/\s*\+\s*/g, "+");
+}

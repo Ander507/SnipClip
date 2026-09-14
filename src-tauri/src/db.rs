@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-pub const MAX_HISTORY: usize = 500;
 pub const DEFAULT_HOTKEY_CLIPBOARD: &str = "Control+Shift+V";
 pub const DEFAULT_HOTKEY_SNIP: &str = "Control+Shift+S";
 pub const DEFAULT_HOTKEY_RECORD: &str = "Control+Shift+R";
@@ -44,7 +43,7 @@ pub struct AppSettings {
     pub hotkey_snip: String,
     #[serde(default = "default_hotkey_record")]
     pub hotkey_record: String,
-    /// Toggle compact dock (Win+V-style). Default Control+Shift+D.
+    /// Floating Win+V-style clipboard popup. Default Control+Shift+D.
     #[serde(default = "default_hotkey_dock")]
     pub hotkey_dock: String,
     /// Wipe unpinned items when a new OS boot is detected.

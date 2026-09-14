@@ -4,6 +4,12 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.6.1] — 2026-09-14
+
+### Cleanup
+
+- Tidied hotkey registration (optional clipboard-popup binding, clearer conflict toasts) and a small hotkey label helper.
+
 ## [1.6.0] — 2026-09-14
 
 ### Clipboard popup

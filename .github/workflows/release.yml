@@ -72,10 +72,7 @@ jobs:
 
             ### Highlights
 
-            - **Win+V-style clipboard popup** — `Ctrl+Shift+D` or `Alt+C`: floating history over any app, pin, clear all, click to paste.
-            - **Snip after record fixed** — stopping a recording no longer kills the next snip overlay.
-            - **Hotkeys stay alive** — a taken dock shortcut no longer wipes snip/clipboard bindings.
-            - Still in from 1.5.5: compact vault layout, opt-in math badges, blackout redact, max history, UI scale.
+            - Small cleanup on hotkey registration — clearer conflict messages, same Win+V popup / snip fixes from 1.6.0.
 
             **Quick try:** install → copy something → `Ctrl+Shift+D` (or `Alt+C`) → Enter to paste → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
 

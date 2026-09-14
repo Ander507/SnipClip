@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import {
   clearHistory,
+  formatHotkeyLabel,
   getSettings,
   hideCommandPalette,
   paletteCopyItem,
@@ -104,8 +105,7 @@ export function CommandPalette() {
     void syncPaletteTheme().catch(console.error);
     void getSettings()
       .then((s) => {
-        const raw = s.hotkeyDock || "Control+Shift+D";
-        setDockHotkey(raw.replace(/Control/gi, "Ctrl").replace(/\+/g, "+"));
+        setDockHotkey(formatHotkeyLabel(s.hotkeyDock || "Control+Shift+D"));
       })
       .catch(console.error);
     void runSearch("");
