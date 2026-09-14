@@ -1058,7 +1058,8 @@ impl Database {
     pub fn search_clipboard(&self, query: &str) -> Result<Vec<ClipboardItem>, String> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
-            return self.list(None, None, 10);
+            // Win+V-style panel shows a short recent stack (pins float first via list ORDER BY)
+            return self.list(None, None, 25);
         }
 
         if let Some(match_q) = Self::fts_match_query(trimmed) {
@@ -1072,7 +1073,7 @@ impl Database {
                      JOIN items i ON i.id = f.rowid
                      WHERE f MATCH ?1
                      ORDER BY i.is_pinned DESC, i.created_at DESC
-                     LIMIT 10",
+                     LIMIT 25",
                 )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
@@ -1097,7 +1098,7 @@ impl Database {
         }
 
         // Fallback for punctuation-only queries or empty FTS hits
-        self.list(None, Some(trimmed), 10)
+        self.list(None, Some(trimmed), 25)
     }
 
     /// Per-category counts for the sidebar — one row per visible tab.

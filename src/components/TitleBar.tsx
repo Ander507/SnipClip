@@ -75,8 +75,8 @@ export function TitleBar({
         <button
           type="button"
           aria-pressed={compactDock}
-          aria-label={compactDock ? "Expand full studio" : "Compact dock"}
-          title={compactDock ? "Expand full studio" : "Compact dock (Win+V style)"}
+          aria-label={compactDock ? "Expand full studio" : "Compact vault layout"}
+          title={compactDock ? "Expand full studio" : "Compact vault layout"}
           className={clsx(
             "flex w-9 items-center justify-center transition",
             compactDock ? "bg-accent-soft text-accent" : "text-fg-secondary hover:bg-hover"

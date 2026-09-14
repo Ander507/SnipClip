@@ -510,6 +510,9 @@ fn show_snipper_overlay(app: &AppHandle, mode: &str) -> Result<(), String> {
         let _ = snipper.set_position(Position::Physical(PhysicalPosition::new(pos.x, pos.y)));
         let _ = snipper.set_size(Size::Physical(PhysicalSize::new(size.width, size.height)));
         let _ = snipper.show();
+        // Parking sets focusable=false; re-assert input after show so a prior record handoff
+        // can't leave the overlay visible but dead to clicks.
+        let _ = snipper.set_focusable(true);
         if !focused {
             let _ = snipper.set_focus();
             focused = true;

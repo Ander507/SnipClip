@@ -848,8 +848,8 @@ export function SettingsView({ onClose, onSaved }: Props) {
             ))}
           </div>
           <HotkeyRow
-            label="Compact dock"
-            hint="Default Ctrl + Shift + D — Win+V-style slim vault"
+            label="Clipboard popup (Win+V style)"
+            hint="Default Ctrl + Shift + D — floating history over any app (same panel as Alt+C)"
             value={draft.hotkeyDock}
             active={capturing === "dock"}
             onCapture={() => setCapturing("dock")}
@@ -905,8 +905,8 @@ export function SettingsView({ onClose, onSaved }: Props) {
             <div className="min-w-0">
               <span className="block text-[13px] text-fg-secondary">Start in compact dock</span>
               <span className="text-[11px] text-fg-muted">
-                Slim Win+V-style vault: search, pins, and recent clips. Toggle anytime from the
-                title bar.
+                Slim vault window (pins + last 10). For a floating Win+V popup over other apps, use{" "}
+                <span className="font-mono">Ctrl+Shift+D</span> or <span className="font-mono">Alt+C</span>.
               </span>
             </div>
             <input

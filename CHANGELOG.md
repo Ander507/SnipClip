@@ -4,6 +4,18 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-09-14
+
+### Clipboard popup
+
+- **Win+V-style floating history:** `Ctrl+Shift+D` and `Alt+C` open a bottom-right panel over any app — search, pin, clear all, click to paste.
+- Title-bar compact dock stays a slim vault layout; the hotkey now opens the floating popup instead.
+
+### Fixes
+
+- **Snip after record:** a late `closeSnipper` no longer parks a brand-new snip overlay.
+- **Hotkeys:** a bad/taken dock shortcut no longer wipes snip and clipboard bindings.
+
 ## [1.5.5] — 2026-09-13
 
 ### Vault

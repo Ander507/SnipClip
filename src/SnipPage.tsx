@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   SnipSelector,
@@ -24,6 +24,7 @@ interface SnipReadyPayload {
 export function SnipPage() {
   const [active, setActive] = useState(true);
   const [session, setSession] = useState(0);
+  const sessionRef = useRef(0);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("snip");
   const [showControls, setShowControls] = useState(true);
   const [overlayOrigin, setOverlayOrigin] = useState<OverlayOrigin | null>(null);
@@ -57,7 +58,11 @@ export function SnipPage() {
         setOverlayOrigin({ originX: payload.originX, originY: payload.originY });
       }
       // Remount selector so a parked record handoff can't leave a stuck REC freeze
-      setSession((n) => n + 1);
+      setSession((n) => {
+        const next = n + 1;
+        sessionRef.current = next;
+        return next;
+      });
       setActive(true);
     }).then((u) => {
       unlisten = u;
@@ -71,6 +76,7 @@ export function SnipPage() {
   }, []);
 
   async function finish(result: CaptureResult | null) {
+    const closingSession = sessionRef.current;
     setActive(false);
     try {
       if (result) {
@@ -80,7 +86,10 @@ export function SnipPage() {
     } catch (err) {
       console.error(err);
     } finally {
-      await closeSnipper(false);
+      // A newer snip-ready bumps session — don't park that fresh overlay.
+      if (closingSession === sessionRef.current) {
+        await closeSnipper(false);
+      }
     }
   }
 

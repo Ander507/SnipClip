@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { RecordControls, type RecordFormat } from "./components/RecordControls";
-import { closeSnipper, finalizeRecording, recorderBarReady, type RecorderBarPayload } from "./lib/api";
+import { finalizeRecording, recorderBarReady, type RecorderBarPayload } from "./lib/api";
 
 export type { RecorderBarPayload };
 
@@ -62,9 +62,9 @@ export function RecorderBarPage() {
     } catch (err) {
       console.error(err);
       setError(String(err));
-    } finally {
-      await closeSnipper(false);
     }
+    // Do not closeSnipper here — snippers were already parked when the bar opened.
+    // A late close after finalize was racing and killing the next snip overlay.
   }
 
   if (!payload) {

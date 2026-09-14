@@ -72,13 +72,12 @@ jobs:
 
             ### Highlights
 
-            - **Compact dock** — slim Win+V-style vault (`Ctrl+Shift+D`): pins, last ten clips, always-on-top.
-            - **Opt-in math** — equation stays raw on the clipboard; vault shows a copyable `= result` badge.
-            - **Blackout redact** on snips (`R`) next to blur (`B`).
-            - **Max history + UI scale** — cap unpinned clips (50–1000) and zoom the vault chrome 90–125%.
-            - **Recorder bar reset** — Stop then record again opens at Start / `00:00`, not a stuck timer.
+            - **Win+V-style clipboard popup** — `Ctrl+Shift+D` or `Alt+C`: floating history over any app, pin, clear all, click to paste.
+            - **Snip after record fixed** — stopping a recording no longer kills the next snip overlay.
+            - **Hotkeys stay alive** — a taken dock shortcut no longer wipes snip/clipboard bindings.
+            - Still in from 1.5.5: compact vault layout, opt-in math badges, blackout redact, max history, UI scale.
 
-            **Quick try:** install → copy something → `Ctrl+Shift+V` or `Ctrl+Shift+D` → `Alt+C` to paste → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
+            **Quick try:** install → copy something → `Ctrl+Shift+D` (or `Alt+C`) → Enter to paste → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
 
             ### Installation (pick one)
 

@@ -32,8 +32,8 @@ AI coding assistants (Cursor) helped with under **20%** of the work — mostly b
 
 1. [Download the latest release](https://github.com/Ander507/SnipClip/releases/latest) (MSI, portable zip, or NSIS).
 2. SnipClip sits in the system tray - no window until you need it.
-3. Copy something. Press **`Ctrl+Shift+V`** for the full vault, or **`Ctrl+Shift+D`** for the compact dock.
-4. Press **`Alt+C`** anywhere to search recent clips and paste.
+3. Copy something. Press **`Ctrl+Shift+V`** for the full vault, or **`Ctrl+Shift+D`** / **`Alt+C`** for a Win+V-style clipboard popup.
+4. Press **`Alt+C`** (or **`Ctrl+Shift+D`**) anywhere to pick a recent clip and paste.
 5. Press **`Ctrl+Shift+S`** to snip (hold **Shift** on release for OCR). In the editor: **`B`** = blur, **`R`** = blackout redact.
 6. Press **`Ctrl+Shift+R`** to record, then trim in the video editor.
 
@@ -59,7 +59,7 @@ Windows 11 ships a clipboard history (`Win+V`). It's a 25-item, cloud-synced, pl
 | Slow to open | **Tray-first**, instant hotkeys, signed auto-updates |
 | No ignore list | **Skip copies** from WhisperFlow, 1Password, Edge, etc. |
 | No auto-clear | **Schedule purge** of unpinned history (never / reboot / daily / weekly) |
-| No command palette | **`Alt+C`** quick paste · **`Ctrl+Shift+D`** compact dock |
+| No command palette | **`Alt+C`** / **`Ctrl+Shift+D`** floating Win+V-style clipboard |
 | No math | **Opt-in** math badges (clipboard stays raw by default) |
 | No encryption | **Password-protected vault** (AES-256-GCM at rest, Argon2id key) |
 
@@ -69,9 +69,8 @@ Everything in SnipClip runs locally in Rust: no cloud, no account, no telemetry.
 
 | Action | Shortcut |
 |---|---|
+| Clipboard popup (Win+V) | `Ctrl+Shift+D` or `Alt+C` |
 | Open vault | `Ctrl+Shift+V` |
-| Compact dock | `Ctrl+Shift+D` |
-| Quick paste palette | `Alt+C` |
 | Snip region | `Ctrl+Shift+S` |
 | Record region | `Ctrl+Shift+R` |
 
@@ -80,7 +79,7 @@ In snip editor: `B` blur · `R` blackout redact · `Ctrl+Z` undo
 
 ## Features
 
-- **Clipboard vault + `Alt+C` palette**: searchable history for text, links, code, math, images, and recordings in local SQLite. `Alt+C` opens a lightweight FTS5-powered search window so you can paste a clip without leaving the app you're in.
+- **Clipboard vault + Win+V popup**: searchable history for text, links, code, math, images, and recordings in local SQLite. **`Ctrl+Shift+D`** or **`Alt+C`** opens a floating clipboard panel over any app — pin, clear all, click to paste.
 - **Multi-monitor capture + annotation**: one overlay per display; physical coordinates handle negative desktop origins, so a secondary screen with a negative position still crops correctly. Draw, highlight, blur, arrows, callouts. The overlay hides and parks off-screen before capture, then waits ~150 ms so DWM flushes the compositor. No translucent UI baked into the shot.
 - **Screen recording + in-app trim**: region MP4/GIF with optional Windows desktop audio, then in-app trim/crop/mute/export. Simple MP4 trims use stream-copy for near-instant cuts.
 - **OCR + math auto-solve**: copy text from any image using the built-in Windows Media OCR engine (no bundled model, so the binary stays small). Copy arithmetic and SnipClip evaluates it, puts the answer on your clipboard, and saves the line in the vault. `2×3÷4` becomes `6`.
