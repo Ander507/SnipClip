@@ -13,12 +13,97 @@ export function listItems(
   });
 }
 
-export function searchClipboard(query: string): Promise<ClipboardItem[]> {
-  return invoke("search_clipboard", { query });
+/** Popup search — pins first, frecency within a query. `limit` is clamped to 5–100 server-side. */
+export function searchClipboard(query: string, limit?: number): Promise<ClipboardItem[]> {
+  return invoke("search_clipboard", { query, limit: limit ?? null });
+}
+
+/**
+ * Downscaled preview of an image / screenshot item (longest edge ≤ `maxSize` px), decoded from
+ * the full image and cached server-side. The stored `preview` is only 64 px — too small for
+ * grid tiles or the popup's image cards. Resolves to null for non-image items.
+ */
+export function itemThumbnail(id: number, maxSize: number): Promise<string | null> {
+  return invoke("item_thumbnail", { id, maxSize });
+}
+
+/** Payload of the `palette-show` event. Cursor is in CSS px relative to the palette window. */
+export interface PaletteShowPayload {
+  cursorX?: number | null;
+  cursorY?: number | null;
 }
 
 export function paletteCopyItem(id: number): Promise<void> {
   return invoke("palette_copy_item", { id });
+}
+
+export type PasteMode = "paste" | "typeOut" | "copyOnly";
+
+/** Key tapped between clips when pasting a batch into form fields. */
+export type FieldKey = "none" | "tab" | "enter";
+
+export type TransformKind =
+  | "plainText"
+  | "trim"
+  | "singleLine"
+  | "stripIndent"
+  | "dedupeLines"
+  | "sortLines"
+  | "lower"
+  | "upper"
+  | "title"
+  | "sentence"
+  | "snake"
+  | "kebab"
+  | "camel"
+  | "slugify"
+  | "jsonPretty"
+  | "jsonMinify"
+  | "base64Encode"
+  | "base64Decode"
+  | "urlEncode"
+  | "urlDecode"
+  | "stripHtml";
+
+export type TransformOption = {
+  kind: TransformKind;
+  label: string;
+  suggested: boolean;
+};
+
+export type PasteResult = {
+  mode: PasteMode;
+  targetTitle: string;
+  typed: boolean;
+  count: number;
+  transform: string | null;
+};
+
+/** Hide SnipClip, restore previous app, Ctrl+V (or Unicode type-out). */
+export function pasteItem(
+  id: number,
+  mode: PasteMode = "paste",
+  transform: TransformKind | null = null
+): Promise<PasteResult> {
+  return invoke("paste_item", { id, mode, transform });
+}
+
+/** Paste several clips — merged, or tabbed through form fields. */
+export function pasteItems(
+  ids: number[],
+  mode: PasteMode = "paste",
+  transform: TransformKind | null = null,
+  fieldKey: FieldKey = "none"
+): Promise<PasteResult> {
+  return invoke("paste_items", { ids, mode, transform, fieldKey });
+}
+
+export function transformOptions(id: number): Promise<TransformOption[]> {
+  return invoke("transform_options", { id });
+}
+
+export function transformPreview(id: number, transform: TransformKind): Promise<string> {
+  return invoke("transform_preview", { id, transform });
 }
 
 export function hideCommandPalette(): Promise<void> {
@@ -43,6 +128,42 @@ export function clearHistory(): Promise<void> {
 
 export function copyItem(id: number): Promise<void> {
   return invoke("copy_item", { id });
+}
+
+/** Type / paste arbitrary text (emoji, kaomoji, symbols) into the previous app. */
+export function pasteText(text: string, mode: PasteMode = "typeOut"): Promise<PasteResult> {
+  return invoke("paste_text", { text, mode });
+}
+
+export interface GifItem {
+  id: string;
+  slug: string;
+  title: string;
+  previewUrl: string;
+  previewWidth: number;
+  previewHeight: number;
+  gifUrl: string;
+}
+
+export interface GifPage {
+  items: GifItem[];
+  page: number;
+  hasNext: boolean;
+}
+
+/** KLIPY trending (empty query) or search. Rejects with "KLIPY_KEY_MISSING" / "KLIPY_KEY_INVALID". */
+export function klipyGifs(query: string, page = 1): Promise<GifPage> {
+  return invoke("klipy_gifs", { query: query.trim() || null, page });
+}
+
+/** Download a KLIPY GIF into the local cache; resolves to its file path. */
+export function prepareGif(url: string, slug: string): Promise<string> {
+  return invoke("prepare_gif", { url, slug });
+}
+
+/** Paste a cached GIF file (as a real file, like Explorer copy) into the previous app. */
+export function pasteFile(path: string, mode: PasteMode = "paste"): Promise<PasteResult> {
+  return invoke("paste_file", { path, mode });
 }
 
 export function openUrl(url: string): Promise<void> {
@@ -419,9 +540,13 @@ export function recorderBarReady(): Promise<RecorderBarPayload | null> {
   return invoke("recorder_bar_ready");
 }
 
+const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
+
+/** Compact hotkey for chips and hints — ⌃⇧S on macOS, Ctrl+Shift+S everywhere else. */
 export function formatHotkeyShort(accel: string): string {
+  if (!IS_MAC) return formatHotkeyLabel(accel);
   return accel
-    .replace(/CommandOrControl/gi, "⌃")
+    .replace(/CommandOrControl/gi, "⌘")
     .replace(/Control/gi, "⌃")
     .replace(/Shift/gi, "⇧")
     .replace(/Alt/gi, "⌥")

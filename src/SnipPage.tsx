@@ -5,9 +5,9 @@ import {
   type OverlayMode,
   type OverlayOrigin,
 } from "./components/SnipSelector";
-import { closeSnipper, finalizeScreenshot, getSettings } from "./lib/api";
+import { closeSnipper, finalizeScreenshot } from "./lib/api";
 import type { CaptureResult } from "./lib/types";
-import { applyThemeFromSettings } from "./lib/theme";
+import { useThemeSync } from "./lib/themeSync";
 
 interface SnipReadyPayload {
   mode?: OverlayMode;
@@ -28,23 +28,12 @@ export function SnipPage() {
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("snip");
   const [showControls, setShowControls] = useState(true);
   const [overlayOrigin, setOverlayOrigin] = useState<OverlayOrigin | null>(null);
+  // The snipper stays warm for the whole session — follow saves instead of reading once.
+  useThemeSync();
 
   useEffect(() => {
     document.documentElement.classList.add("snip-mode");
     document.body.classList.add("snip-mode");
-    void getSettings()
-      .then((s) =>
-        applyThemeFromSettings({
-          themeMode: s.themeMode,
-          accentColor: s.accentColor,
-          themeUseCustom: s.themeUseCustom ?? false,
-          themeCustom: s.themeCustom ?? null,
-          themeGlassmorphic: s.themeGlassmorphic ?? false,
-          themeTranslucency: s.themeTranslucency ?? 0,
-          themeBackgroundImage: s.themeBackgroundImage ?? null,
-        })
-      )
-      .catch(console.error);
 
     let unlisten: (() => void) | undefined;
     void listen<SnipReadyPayload>("snip-ready", (event) => {

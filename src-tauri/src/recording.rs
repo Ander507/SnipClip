@@ -744,7 +744,3 @@ pub fn stop_region_recording() -> Result<String, String> {
 
     Ok(path.to_string_lossy().into_owned())
 }
-
-pub fn is_recording() -> bool {
-    RECORDING.lock().is_some()
-}

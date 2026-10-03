@@ -1,63 +1,52 @@
 import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
 import {
+  AppWindow,
   Copy,
   Pin,
-  Link2,
   Type,
-  Image as ImageIcon,
   Trash2,
-  Code2,
   ScanText,
   Pencil,
   ExternalLink,
   Check,
   X,
-  Film,
   Sigma,
   Languages,
 } from "lucide-react";
 import type { ClipboardItem } from "../lib/types";
-import {
-  detectLanguage,
-  languageLabel,
-} from "../lib/codeDetect";
+import type { Density } from "../lib/uiPrefs";
+import { detectLanguage, languageLabel } from "../lib/codeDetect";
 import { parseTranslatedContent } from "../lib/translatedContent";
 import { parseMathContent } from "../lib/mathContent";
+import { charCountLabel, dimensionsLabel, sourceLabel } from "../lib/itemMeta";
+import { useItemThumbnail } from "../lib/thumbnails";
 import { CodePreview } from "./CodePreview";
 import { SmartTextPreview } from "./SmartTextPreview";
 import { displayUrl, isLinkItem, linkHrefFromText } from "../lib/urls";
+import {
+  ActionButton,
+  MetaLine,
+  ROW_METRICS,
+  TypeIcon,
+  coverEdge,
+  imageFallback,
+  isImageItem,
+  isVideoItem,
+  itemTimeLabel,
+} from "./itemParts";
 
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
-function TypeIcon({ type, isCode }: { type: string; isCode?: boolean }) {
-  if (isCode) return <Code2 size={14} />;
-  if (type === "image" || type === "screenshot") return <ImageIcon size={14} />;
-  if (type === "video" || type === "gif") return <Film size={14} />;
-  if (type === "link") return <Link2 size={14} />;
-  if (type === "math") return <Sigma size={14} />;
-  if (type === "translated") return <Languages size={14} />;
-  return <Type size={14} />;
-}
-
-function thumbSrc(item: ClipboardItem): string | null {
-  if (item.contentType !== "image" && item.contentType !== "screenshot") return null;
-  if (item.preview?.startsWith("data:image")) return item.preview;
-  if (item.content?.startsWith("data:image")) return item.content;
-  return null;
-}
+/** Enough for three wrapped lines; keeps huge clips cheap to lay out. */
+const PREVIEW_CHARS = 600;
 
 interface Props {
   item: ClipboardItem;
   selected: boolean;
+  /** From `useNow()` in the list, so every row ticks together. */
+  now: number;
+  /** A day header sits above this row, so the time can leave the day out. */
+  underDayHeader?: boolean;
+  density?: Density;
   ocrAvailable?: boolean;
   onSelect: () => void;
   onCopy: () => void;
@@ -72,12 +61,14 @@ interface Props {
   onEditVideo?: () => void;
   onOpenLink: (url: string) => void;
   onUpdate: (id: number, content: string) => void;
-  onEditLayout?: (editing: boolean, lineCount: number) => void;
 }
 
 export function ClipboardItemRow({
   item,
   selected,
+  now,
+  underDayHeader = false,
+  density = "comfortable",
   ocrAvailable = false,
   onSelect,
   onCopy,
@@ -90,18 +81,17 @@ export function ClipboardItemRow({
   onEditVideo,
   onOpenLink,
   onUpdate,
-  onEditLayout,
 }: Props) {
+  const m = ROW_METRICS[density];
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.content || item.preview || "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const thumb = thumbSrc(item);
   const textBody = item.content || item.preview || "";
   const lang = item.contentType === "text" ? detectLanguage(textBody) : "plain";
   const isCode = lang !== "plain";
-  const isImage = item.contentType === "image" || item.contentType === "screenshot";
-  const isVideo = item.contentType === "video" || item.contentType === "gif";
+  const isImage = isImageItem(item);
+  const isVideo = isVideoItem(item);
   const isMath = item.contentType === "math";
   const isTranslated = item.contentType === "translated";
   const translatedParts = isTranslated ? parseTranslatedContent(textBody) : null;
@@ -111,6 +101,24 @@ export function ClipboardItemRow({
   const href = isLink ? linkHrefFromText(textBody) : null;
   const canEdit = !isImage && !isVideo && !isMath && !isTranslated && !isCode;
 
+  const thumb = useItemThumbnail(
+    item.id,
+    coverEdge(item, m.thumbW, m.thumbH),
+    imageFallback(item),
+    isImage
+  );
+  const source = sourceLabel(item);
+  const dims = dimensionsLabel(item);
+  const chars =
+    isImage || isVideo || isMath
+      ? null
+      : charCountLabel(isTranslated ? translatedParts?.translated ?? "" : textBody);
+  const typeTag = isCode
+    ? languageLabel(lang)
+    : isLink && item.contentType === "text"
+      ? "link"
+      : item.contentType;
+
   useEffect(() => {
     if (!editing) setDraft(item.content || item.preview || "");
   }, [item.content, item.preview, editing]);
@@ -118,11 +126,6 @@ export function ClipboardItemRow({
   useEffect(() => {
     if (editing) textareaRef.current?.focus();
   }, [editing]);
-
-  useEffect(() => {
-    const lines = Math.min(8, Math.max(2, draft.split("\n").length));
-    onEditLayout?.(editing, lines);
-  }, [editing, draft, onEditLayout]);
 
   function saveEdit() {
     const next = draft.trim();
@@ -136,44 +139,78 @@ export function ClipboardItemRow({
     setEditing(false);
   }
 
+  const imageKind = item.contentType === "screenshot" ? "Screenshot" : "Image";
+  const imageName =
+    item.preview && !item.preview.startsWith("data:") ? item.preview : imageKind;
+
   return (
     <div
       role="option"
       aria-selected={selected}
       className={clsx(
-        "group flex w-full cursor-pointer items-center gap-3.5 rounded-lg border p-3.5 transition-all",
+        "group relative flex w-full cursor-pointer rounded-lg border transition-colors",
+        m.pad,
+        m.gap,
+        isCode ? "items-start" : "items-center",
         selected
-          ? "border-accent bg-accent-soft"
+          ? "border-line-strong bg-hover"
           : "border-line bg-raised hover:border-line-strong hover:bg-hover"
       )}
       onClick={() => {
-        if (editing) return;
-        onSelect();
-        if (isImage) onPreviewImage();
-        if (isVideo) onEditVideo?.();
+        if (!editing) onSelect();
       }}
       onDoubleClick={() => {
-        if (!isImage && !isVideo && !editing) onCopy();
+        if (editing) return;
+        if (isImage) onPreviewImage();
+        else if (isVideo) onEditVideo?.();
+        else onCopy();
       }}
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-muted text-fg-muted">
-        {thumb ? (
-          <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
-        ) : (
+      {selected && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-2 left-0 w-[3px] rounded-full bg-accent"
+        />
+      )}
+
+      {isImage ? (
+        <div
+          className="shrink-0 overflow-hidden rounded-md border border-line bg-inset"
+          style={{ width: m.thumbW, height: m.thumbH }}
+          title="Double-click to preview"
+        >
+          {thumb ? (
+            <img
+              src={thumb}
+              alt=""
+              draggable={false}
+              decoding="async"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-fg-muted">
+              <TypeIcon type={item.contentType} />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div
+          className={clsx(
+            "flex shrink-0 items-center justify-center rounded-md border border-line bg-muted text-fg-muted",
+            m.iconBox
+          )}
+          title={isVideo ? "Double-click to edit" : undefined}
+        >
           <TypeIcon type={item.contentType} isCode={isCode} />
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="min-w-0 flex-1 pr-2">
         {isImage ? (
           <p className="truncate text-xs font-medium text-fg-secondary">
-            {item.contentType === "screenshot"
-              ? item.preview?.startsWith("data:")
-                ? "Screenshot — click to preview"
-                : item.preview || "Screenshot"
-              : item.preview?.startsWith("data:")
-                ? "Image — click to preview"
-                : item.preview || "Image"}
+            {imageName}
+            {source && <span className="font-normal text-fg-muted"> from {source}</span>}
+            {dims && <span className="font-normal text-fg-muted"> · {dims}</span>}
           </p>
         ) : isVideo ? (
           <p className="truncate text-xs font-medium text-fg-secondary">
@@ -193,6 +230,7 @@ export function ClipboardItemRow({
                   e.stopPropagation();
                   onCopyMathResult?.();
                 }}
+                onDoubleClick={(e) => e.stopPropagation()}
               >
                 <Sigma size={11} />
                 <span className="truncate">= {mathParts.result}</span>
@@ -212,7 +250,7 @@ export function ClipboardItemRow({
             )}
           </div>
         ) : isCode ? (
-          <CodePreview content={textBody} />
+          <CodePreview content={textBody} maxLines={m.codeLines} />
         ) : editing ? (
           <textarea
             ref={textareaRef}
@@ -242,216 +280,142 @@ export function ClipboardItemRow({
               e.stopPropagation();
               onOpenLink(href);
             }}
+            onDoubleClick={(e) => e.stopPropagation()}
           >
             <ExternalLink size={12} className="shrink-0" />
             <span className="truncate">{displayUrl(textBody)}</span>
           </button>
         ) : (
-          <SmartTextPreview text={item.preview || item.content || ""} compact />
+          <SmartTextPreview text={textBody.slice(0, PREVIEW_CHARS)} lines={m.lines} compact />
         )}
 
-        <div className="mt-1 flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-fg-muted">
-            {isCode
-              ? languageLabel(lang)
-              : item.contentType === "screenshot"
-                ? "screenshot"
-                : item.contentType === "math"
-                  ? "math"
-                  : item.contentType === "translated"
-                    ? "translated"
-                    : item.contentType}
-          </span>
-          <span className="text-[10px] text-fg-faint">•</span>
-          <span className="font-mono text-[10px] text-fg-faint">{formatTime(item.createdAt)}</span>
-          {item.isPinned && (
-            <>
-              <span className="text-[10px] text-fg-faint">•</span>
-              <span className="inline-flex items-center gap-0.5 text-[10px] text-accent">
-                <Pin size={9} /> Pinned
-              </span>
-            </>
-          )}
-        </div>
+        <MetaLine
+          className="mt-1"
+          parts={[
+            !isImage && {
+              key: "type",
+              node: (
+                <span className="font-mono uppercase tracking-wider text-fg-muted">{typeTag}</span>
+              ),
+            },
+            {
+              key: "time",
+              node: (
+                <time
+                  dateTime={item.createdAt}
+                  title={new Date(item.createdAt).toLocaleString()}
+                  className="font-mono"
+                >
+                  {itemTimeLabel(item.createdAt, now, underDayHeader)}
+                </time>
+              ),
+            },
+            !isImage && source
+              ? {
+                  key: "source",
+                  shrink: true,
+                  node: (
+                    <span
+                      className="flex min-w-0 items-center gap-1 text-fg-muted"
+                      title={`Copied from ${item.sourceApp}`}
+                    >
+                      <AppWindow size={9} className="shrink-0" />
+                      <span className="truncate">{source}</span>
+                    </span>
+                  ),
+                }
+              : null,
+            chars ? { key: "chars", node: <span className="font-mono">{chars}</span> } : null,
+            item.isPinned && {
+              key: "pinned",
+              node: (
+                <span className="inline-flex items-center gap-0.5 text-accent">
+                  <Pin size={9} /> Pinned
+                </span>
+              ),
+            },
+          ]}
+        />
       </div>
 
       <div
         className={clsx(
           "flex shrink-0 items-center gap-1 transition-opacity",
-          editing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          editing || selected
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100"
         )}
+        onDoubleClick={(e) => e.stopPropagation()}
       >
         {editing ? (
           <>
-            <button
-              type="button"
-              title="Save (Ctrl+Enter)"
-              className="rounded p-1.5 text-accent transition hover:bg-hover"
-              onClick={(e) => {
-                e.stopPropagation();
-                saveEdit();
-              }}
-            >
+            <ActionButton title="Save (Ctrl+Enter)" onClick={saveEdit} active>
               <Check size={13} />
-            </button>
-            <button
-              type="button"
-              title="Cancel"
-              className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-fg"
-              onClick={(e) => {
-                e.stopPropagation();
-                cancelEdit();
-              }}
-            >
+            </ActionButton>
+            <ActionButton title="Cancel" tone="neutral" onClick={cancelEdit}>
               <X size={13} />
-            </button>
+            </ActionButton>
           </>
         ) : (
           <>
             {canEdit && (
-              <button
-                type="button"
-                title="Edit snippet"
-                className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditing(true);
-                }}
-              >
+              <ActionButton title="Edit snippet" onClick={() => setEditing(true)}>
                 <Pencil size={13} />
-              </button>
+              </ActionButton>
             )}
-            {isVideo && (
-              <button
-                type="button"
-                title="Edit recording"
-                className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEditVideo?.();
-                }}
-              >
+            {isVideo && onEditVideo && (
+              <ActionButton title="Edit recording" onClick={onEditVideo}>
                 <Pencil size={13} />
-              </button>
+              </ActionButton>
             )}
             {isLink && href && (
-              <button
-                type="button"
-                title="Open in browser"
-                className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenLink(href);
-                }}
-              >
+              <ActionButton title="Open in browser" onClick={() => onOpenLink(href)}>
                 <ExternalLink size={13} />
-              </button>
+              </ActionButton>
             )}
             {isImage && ocrAvailable && (
-              <button
-                type="button"
-                title="Copy Text (OCR)"
-                className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onExtractText();
-                }}
-              >
+              <ActionButton title="Copy Text (OCR)" onClick={onExtractText}>
                 <ScanText size={13} />
-              </button>
+              </ActionButton>
             )}
             {isTranslated ? (
               <>
-                <button
-                  type="button"
-                  title="Copy translation"
-                  className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCopy();
-                  }}
-                >
+                <ActionButton title="Copy translation" onClick={onCopy}>
                   <Languages size={13} />
-                </button>
+                </ActionButton>
                 {onCopyOriginal && translatedParts?.original && (
-                  <button
-                    type="button"
-                    title="Copy original"
-                    className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCopyOriginal();
-                    }}
-                  >
+                  <ActionButton title="Copy original" onClick={onCopyOriginal}>
                     <Type size={13} />
-                  </button>
+                  </ActionButton>
                 )}
               </>
             ) : isMath ? (
               <>
-                <button
-                  type="button"
-                  title="Copy equation"
-                  className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCopy();
-                  }}
-                >
+                <ActionButton title="Copy equation" onClick={onCopy}>
                   <Copy size={13} />
-                </button>
+                </ActionButton>
                 {onCopyMathResult && mathParts?.result && (
-                  <button
-                    type="button"
-                    title="Copy result"
-                    className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCopyMathResult();
-                    }}
-                  >
+                  <ActionButton title="Copy result" onClick={onCopyMathResult}>
                     <Sigma size={13} />
-                  </button>
+                  </ActionButton>
                 )}
               </>
             ) : (
-              <button
-                type="button"
-                title="Copy"
-                className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-accent"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCopy();
-                }}
-              >
+              <ActionButton title="Copy" onClick={onCopy}>
                 <Copy size={13} />
-              </button>
+              </ActionButton>
             )}
-            <button
-              type="button"
-              title="Pin"
-              className={clsx(
-                "rounded p-1.5 transition hover:bg-hover",
-                item.isPinned ? "text-accent" : "text-fg-muted hover:text-fg"
-              )}
-              onClick={(e) => {
-                e.stopPropagation();
-                onPin();
-              }}
+            <ActionButton
+              title={item.isPinned ? "Unpin" : "Pin"}
+              tone="neutral"
+              active={item.isPinned}
+              onClick={onPin}
             >
               <Pin size={13} />
-            </button>
-            <button
-              type="button"
-              title="Delete"
-              className="rounded p-1.5 text-fg-muted transition hover:bg-hover hover:text-danger"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
+            </ActionButton>
+            <ActionButton title="Delete" tone="danger" onClick={onDelete}>
               <Trash2 size={13} />
-            </button>
+            </ActionButton>
           </>
         )}
       </div>

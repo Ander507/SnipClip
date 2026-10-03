@@ -12,8 +12,19 @@
   --color-hover: var(--sc-hover);
   --color-muted: var(--sc-muted);
   --color-inset: var(--sc-inset);
-  --color-line: var(--sc-line);
-  --color-line-strong: var(--sc-line-strong);
+  /* Border strength (Settings → Appearance): subtle fades lines, strong pulls them toward text */
+  --color-line: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--sc-line), var(--sc-fg) var(--sc-border-boost, 0%))
+      var(--sc-border-mix, 100%),
+    transparent
+  );
+  --color-line-strong: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--sc-line-strong), var(--sc-fg) var(--sc-border-boost, 0%))
+      var(--sc-border-mix, 100%),
+    transparent
+  );
   --color-fg: var(--sc-fg);
   --color-fg-secondary: var(--sc-fg-secondary);
   --color-fg-muted: var(--sc-fg-muted);
@@ -77,6 +88,33 @@
   --sc-accent: #fb923c;
   --sc-accent-fg: #000000;
 }
+[data-accent="blue"] {
+  --sc-accent: #60a5fa;
+  --sc-accent-fg: #000000;
+}
+[data-accent="indigo"] {
+  --sc-accent: #818cf8;
+  --sc-accent-fg: #000000;
+}
+[data-accent="pink"] {
+  --sc-accent: #f472b6;
+  --sc-accent-fg: #000000;
+}
+[data-accent="red"] {
+  --sc-accent: #f87171;
+  --sc-accent-fg: #000000;
+}
+[data-accent="yellow"] {
+  --sc-accent: #facc15;
+  --sc-accent-fg: #000000;
+}
+
+html[data-borders="subtle"] {
+  --sc-border-mix: 55%;
+}
+html[data-borders="strong"] {
+  --sc-border-boost: 22%;
+}
 
 * {
   box-sizing: border-box;
@@ -118,6 +156,16 @@ html[data-bg-image="true"] body,
 html[data-bg-image="true"] #root,
 html[data-glass="true"] body,
 html[data-glass="true"] #root {
+  background-color: transparent;
+}
+
+/* Mica / Acrylic — the native window material shows through a see-through page */
+html[data-backdrop="mica"],
+html[data-backdrop="mica"] body,
+html[data-backdrop="mica"] #root,
+html[data-backdrop="acrylic"],
+html[data-backdrop="acrylic"] body,
+html[data-backdrop="acrylic"] #root {
   background-color: transparent;
 }
 
@@ -210,6 +258,14 @@ html.palette-mode .command-palette-shell {
 
 ::-webkit-scrollbar {
   width: 10px;
+}
+
+/* Horizontal strips (popup category bars) scroll by wheel/drag without a visible bar */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 ::-webkit-scrollbar-track {

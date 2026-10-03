@@ -134,8 +134,8 @@ export function RecordControls({
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-white/15 bg-[#141414ee] px-3 py-2 shadow-2xl backdrop-blur-md">
-      <span className="min-w-[3.25rem] rounded bg-black/50 px-2 py-0.5 font-mono text-[11px] tabular-nums text-white/90">
+    <div className="flex items-center gap-2 rounded-lg border border-line-strong bg-raised/95 px-3 py-2 shadow-2xl backdrop-blur-md">
+      <span className="min-w-[3.25rem] rounded bg-inset px-2 py-0.5 font-mono text-[11px] tabular-nums text-fg">
         {status ?? formatTimer(elapsed)}
       </span>
 
@@ -165,7 +165,7 @@ export function RecordControls({
             type="button"
             disabled={busy}
             onClick={() => void handlePause()}
-            className="flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-[11px] text-white/85 transition hover:bg-white/10 disabled:opacity-50"
+            className="flex items-center gap-1 rounded-md border border-line-strong px-2 py-1 text-[11px] text-fg-secondary transition hover:bg-hover disabled:opacity-50"
             title={paused ? "Resume" : "Pause"}
           >
             {paused ? <Play size={12} /> : <Pause size={12} />}
@@ -174,13 +174,13 @@ export function RecordControls({
         </>
       )}
 
-      <div className="ml-1 flex overflow-hidden rounded-md border border-white/10 text-[10px]">
+      <div className="ml-1 flex overflow-hidden rounded-md border border-line text-[10px]">
         <button
           type="button"
           disabled={recording}
           onClick={() => setFormat("gif")}
           className={`px-2 py-0.5 transition ${
-            format === "gif" ? "bg-accent/30 text-accent" : "text-white/60 hover:bg-white/5"
+            format === "gif" ? "bg-accent/30 text-accent" : "text-fg-muted hover:bg-hover"
           } disabled:opacity-40`}
         >
           GIF
@@ -190,7 +190,7 @@ export function RecordControls({
           disabled={recording}
           onClick={() => setFormat("mp4")}
           className={`px-2 py-0.5 transition ${
-            format === "mp4" ? "bg-accent/30 text-accent" : "text-white/60 hover:bg-white/5"
+            format === "mp4" ? "bg-accent/30 text-accent" : "text-fg-muted hover:bg-hover"
           } disabled:opacity-40`}
         >
           MP4
@@ -203,10 +203,10 @@ export function RecordControls({
         aria-pressed={systemAudio}
         title={format === "mp4" ? "Capture desktop audio" : "Desktop audio requires MP4"}
         onClick={() => setSystemAudio((enabled) => !enabled)}
-        className={`rounded-md border border-white/10 p-1 transition ${
+        className={`rounded-md border border-line p-1 transition ${
           systemAudio && format === "mp4"
             ? "bg-accent/30 text-accent"
-            : "text-white/50 hover:bg-white/5"
+            : "text-fg-muted hover:bg-hover"
         } disabled:opacity-30`}
       >
         {systemAudio && format === "mp4" ? <Volume2 size={13} /> : <VolumeX size={13} />}

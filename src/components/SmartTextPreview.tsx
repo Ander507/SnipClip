@@ -9,9 +9,13 @@ import {
 interface Props {
   text: string;
   compact?: boolean;
+  /** Plain text wraps onto up to this many lines (keeping line breaks); 1 = single truncated line. */
+  lines?: 1 | 2 | 3;
 }
 
-export function SmartTextPreview({ text, compact = false }: Props) {
+const LINE_CLAMP = { 2: "line-clamp-2", 3: "line-clamp-3" } as const;
+
+export function SmartTextPreview({ text, compact = false, lines = 1 }: Props) {
   const trimmed = text.trim();
   const kind = detectSmartContent(trimmed);
 
@@ -56,6 +60,18 @@ export function SmartTextPreview({ text, compact = false }: Props) {
         <p className="truncate font-mono text-xs font-medium text-fg-secondary">{trimmed}</p>
         <p className="mt-0.5 text-[11px] text-fg-muted">{formatUnixTimestamp(trimmed)}</p>
       </div>
+    );
+  }
+
+  if (lines !== 1) {
+    return (
+      <p
+        className={`whitespace-pre-wrap break-words text-xs font-medium text-fg-secondary ${
+          LINE_CLAMP[lines]
+        }`}
+      >
+        {trimmed}
+      </p>
     );
   }
 

@@ -9,11 +9,13 @@ import {
   videoEditorReady,
   type VideoEditorPayload,
 } from "./lib/api";
+import { useThemeSync } from "./lib/themeSync";
 
 export function VideoEditorPage() {
   const [session, setSession] = useState<VideoEditorPayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useThemeSync();
 
   useEffect(() => {
     document.documentElement.classList.add("video-editor-mode");

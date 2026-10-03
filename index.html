@@ -5,6 +5,29 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SnipClip</title>
+    <script>
+      // Last saved theme (written by src/lib/themeSync.ts) before the bundle loads, so the
+      // first paint isn't the default dark/cyan. main.tsx then applies the full theme.
+      try {
+        var cached = JSON.parse(localStorage.getItem("snipclip.theme.v1") || "null");
+        if (cached) {
+          var html = document.documentElement;
+          var light =
+            cached.themeMode === "light" ||
+            (cached.themeMode === "system" &&
+              window.matchMedia("(prefers-color-scheme: light)").matches);
+          html.dataset.theme = light ? "light" : "dark";
+          if (/^#[0-9a-fA-F]{6}$/.test(cached.accentColor || "")) {
+            html.style.setProperty("--sc-accent", cached.accentColor);
+          } else if (cached.accentColor) {
+            html.dataset.accent = cached.accentColor;
+          }
+          if (cached.themeUseCustom && cached.themeCustom && cached.themeCustom.app) {
+            html.style.setProperty("--sc-app", cached.themeCustom.app);
+          }
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body class="bg-transparent">
     <div id="root"></div>

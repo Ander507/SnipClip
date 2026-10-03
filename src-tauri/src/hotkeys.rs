@@ -1,4 +1,4 @@
-use crate::db::{AppSettings, Database};
+use crate::db::AppSettings;
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -292,13 +292,6 @@ pub fn install_plugin(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
             .build(),
     )?;
     Ok(())
-}
-
-pub fn bootstrap(app: &AppHandle, db: &Database) -> Result<AppSettings, String> {
-    let settings = db.get_settings()?;
-    install_plugin(app).map_err(|e| e.to_string())?;
-    register_hotkeys(app, &settings)?;
-    Ok(settings)
 }
 
 /// Install the shortcut plugin immediately, then register bindings on a background path.

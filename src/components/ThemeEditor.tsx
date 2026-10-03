@@ -16,8 +16,10 @@ import {
   THEME_CSS_VARS,
   THEME_TOKEN_GROUPS,
   getPresetThemeColors,
+  normalizeAccent,
+  normalizeThemeMode,
+  resolveThemeMode,
   settingsToThemePack,
-  type AccentColor,
   type ThemeCustomColors,
   type ThemePack,
   type ThemeTokenKey,
@@ -33,6 +35,7 @@ import {
   writeTextFilePath,
 } from "../lib/api";
 import { ColorPicker } from "./ColorPicker";
+import { Switch } from "./Switch";
 
 interface Props {
   draft: AppSettings;
@@ -99,7 +102,9 @@ function ColorRow({
 }
 
 export function ThemeEditor({ draft, setDraft }: Props) {
-  const colors = draft.themeCustom ?? getPresetThemeColors(draft.themeMode, draft.accentColor);
+  const colors =
+    draft.themeCustom ??
+    getPresetThemeColors(resolveThemeMode(draft.themeMode), draft.accentColor);
   const [packs, setPacks] = useState<ThemePack[]>([]);
   const [packName, setPackName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -126,7 +131,8 @@ export function ThemeEditor({ draft, setDraft }: Props) {
     setDraft((prev) => {
       if (!prev) return prev;
       const base =
-        prev.themeCustom ?? getPresetThemeColors(prev.themeMode, prev.accentColor);
+        prev.themeCustom ??
+        getPresetThemeColors(resolveThemeMode(prev.themeMode), prev.accentColor);
       return {
         ...prev,
         themeUseCustom: true,
@@ -135,15 +141,13 @@ export function ThemeEditor({ draft, setDraft }: Props) {
     });
   }
 
+  /** Colors only — glass, translucency and the wallpaper are separate controls above. */
   function resetFromPreset() {
     setDraft((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        themeCustom: getPresetThemeColors(prev.themeMode, prev.accentColor as AccentColor),
-        themeGlassmorphic: false,
-        themeTranslucency: 0,
-        themeBackgroundImage: null,
+        themeCustom: getPresetThemeColors(resolveThemeMode(prev.themeMode), prev.accentColor),
       };
     });
   }
@@ -151,10 +155,8 @@ export function ThemeEditor({ draft, setDraft }: Props) {
   function applyPack(pack: ThemePack) {
     const custom = (pack.colors ?? null) as ThemeCustomColors | null;
     patchDraft({
-      themeMode: pack.themeMode === "light" ? "light" : "dark",
-      accentColor: (["cyan", "purple", "green", "orange"].includes(pack.accentColor)
-        ? pack.accentColor
-        : "cyan") as AccentColor,
+      themeMode: normalizeThemeMode(pack.themeMode),
+      accentColor: normalizeAccent(pack.accentColor),
       themeUseCustom: Boolean(custom),
       themeCustom: custom,
       themeGlassmorphic: Boolean(pack.glassmorphic),
@@ -259,24 +261,22 @@ export function ThemeEditor({ draft, setDraft }: Props) {
               Colors, glass, translucency, background. Save packs to themes.json.
             </span>
           </div>
-          <input
-            type="checkbox"
+          <Switch
+            label="Custom theme"
             checked={draft.themeUseCustom}
-            onChange={(e) =>
+            onChange={(useCustom) =>
               setDraft((prev) => {
                 if (!prev) return prev;
-                const useCustom = e.target.checked;
                 return {
                   ...prev,
                   themeUseCustom: useCustom,
                   themeCustom: useCustom
                     ? prev.themeCustom ??
-                      getPresetThemeColors(prev.themeMode, prev.accentColor as AccentColor)
+                      getPresetThemeColors(resolveThemeMode(prev.themeMode), prev.accentColor)
                     : prev.themeCustom,
                 };
               })
             }
-            className="h-4 w-4 cursor-pointer rounded"
           />
         </div>
 
@@ -287,11 +287,10 @@ export function ThemeEditor({ draft, setDraft }: Props) {
             <span className="block text-[13px] text-fg-secondary">Glassmorphic</span>
             <span className="text-[11px] text-fg-muted">Blurred translucent panels</span>
           </div>
-          <input
-            type="checkbox"
+          <Switch
+            label="Glassmorphic"
             checked={draft.themeGlassmorphic}
-            onChange={(e) => patchDraft({ themeGlassmorphic: e.target.checked })}
-            className="h-4 w-4 cursor-pointer rounded"
+            onChange={(themeGlassmorphic) => patchDraft({ themeGlassmorphic })}
           />
         </div>
 
@@ -352,7 +351,7 @@ export function ThemeEditor({ draft, setDraft }: Props) {
                 onClick={resetFromPreset}
                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-fg-muted transition hover:bg-hover hover:text-fg"
               >
-                <RotateCcw size={11} /> Reset from preset
+                <RotateCcw size={11} /> Reset colors to preset
               </button>
             </div>
             {THEME_TOKEN_GROUPS.map((group, gi) => (

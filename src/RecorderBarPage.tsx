@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { RecordControls, type RecordFormat } from "./components/RecordControls";
 import { finalizeRecording, recorderBarReady, type RecorderBarPayload } from "./lib/api";
+import { useThemeSync } from "./lib/themeSync";
 
 export type { RecorderBarPayload };
 
@@ -9,6 +10,7 @@ export function RecorderBarPage() {
   const [payload, setPayload] = useState<RecorderBarPayload | null>(null);
   const [session, setSession] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  useThemeSync({ effects: false });
 
   useEffect(() => {
     document.documentElement.classList.add("recorder-mode");
@@ -74,7 +76,9 @@ export function RecorderBarPage() {
   return (
     <div className="flex h-full w-full items-center justify-center bg-transparent p-1">
       {error ? (
-        <div className="rounded-md bg-red-900/90 px-3 py-1.5 text-[11px] text-red-100">{error}</div>
+        <div className="rounded-md border border-danger/40 bg-raised px-3 py-1.5 text-[11px] text-danger shadow-2xl">
+          {error}
+        </div>
       ) : (
         <RecordControls
           key={session}

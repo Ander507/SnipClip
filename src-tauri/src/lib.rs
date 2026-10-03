@@ -4,15 +4,19 @@ mod command_palette;
 mod commands;
 mod db;
 mod hotkeys;
+mod klipy;
 mod math;
 mod ocr;
+mod paste;
 mod recorder_bar;
 mod recording;
+mod scratch;
 mod screen_capture;
 mod screenshot_popup;
 mod snip;
 mod system_audio;
 mod themes;
+mod transform;
 mod translate;
 mod vault;
 mod video_edit;
@@ -40,7 +44,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_items,
             commands::search_clipboard,
+            commands::item_thumbnail,
             commands::palette_copy_item,
+            commands::paste_item,
+            commands::paste_items,
+            commands::paste_file,
+            commands::paste_text,
+            commands::klipy_gifs,
+            commands::prepare_gif,
+            commands::transform_options,
+            commands::transform_preview,
             commands::hide_command_palette,
             commands::show_command_palette,
             commands::get_item,
@@ -186,6 +199,7 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let settings = database.get_settings().unwrap_or_default();
+                themes::sync_window_backgrounds(app.handle(), &settings);
                 app.manage(Arc::new(HotkeyState::from_settings(&settings)));
                 // Plugin install + register_all off the blocking path so a hotkey failure cannot kill startup
                 if let Err(e) = hotkeys::bootstrap_nonblocking(app.handle(), &settings) {
@@ -200,6 +214,7 @@ pub fn run() {
             }
 
             clipboard::start_monitor(app.handle().clone());
+            paste::start_foreground_tracker(app.handle().clone());
 
             // Keep snipper webview warm and hidden so the first hotkey is instant
             if let Some(snipper) = app.get_webview_window("snipper") {
@@ -291,6 +306,17 @@ pub fn run() {
                     let visible = window.is_visible().unwrap_or(false)
                         && !window.is_minimized().unwrap_or(false);
                     clipboard::set_main_ui_visible(visible);
+                }
+            }
+            // Windows light/dark switch — re-resolve "system" mode and its Mica variant live
+            tauri::WindowEvent::ThemeChanged(_) => {
+                if window.label() == "main" {
+                    let app = window.app_handle();
+                    if let Some(db) = app.try_state::<Arc<Database>>() {
+                        if let Ok(settings) = db.get_settings() {
+                            themes::sync_window_backgrounds(app, &settings);
+                        }
+                    }
                 }
             }
             _ => {}

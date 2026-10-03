@@ -17,6 +17,11 @@ export interface ClipboardItem {
   preview: string;
   isPinned: boolean;
   createdAt: string;
+  /** Process that owned the clipboard (e.g. "Code.exe"). Null for snips and older rows. */
+  sourceApp?: string | null;
+  /** Pixel size for image / screenshot items. */
+  width?: number | null;
+  height?: number | null;
 }
 
 export interface CaptureResult {
@@ -28,8 +33,10 @@ export interface CaptureResult {
   vaultId?: number;
 }
 
-export type { ThemeMode, AccentColor, ThemeCustomColors } from "./theme";
-import type { ThemeMode, AccentColor, ThemeCustomColors } from "./theme";
+export type { ThemeMode, ThemePreference, ThemeBackdrop, AccentColor, ThemeCustomColors } from "./theme";
+import type { ThemePreference, ThemeBackdrop, AccentColor, ThemeCustomColors } from "./theme";
+import type { UiPrefs } from "./uiPrefs";
+import { DEFAULT_UI_PREFS } from "./uiPrefs";
 
 export interface AppSettings {
   hotkeyClipboard: string;
@@ -43,7 +50,8 @@ export interface AppSettings {
   lastCleanup: number;
   /** Start with Windows / login — tray until hotkey */
   launchAtStartup: boolean;
-  themeMode: ThemeMode;
+  /** "system" follows Windows light/dark. */
+  themeMode: ThemePreference;
   accentColor: AccentColor;
   /** When true, `themeCustom` overrides preset CSS variables. */
   themeUseCustom: boolean;
@@ -53,6 +61,8 @@ export interface AppSettings {
   themeTranslucency: number;
   /** data URL (resolved) or null */
   themeBackgroundImage: string | null;
+  /** Native Windows 11 window material behind translucent surfaces. */
+  themeBackdrop: ThemeBackdrop;
   /** Process names whose copies are not stored (e.g. WhisperFlow.exe). */
   ignoreList: string[];
   /** When true, Snip waits before opening the overlay (stealth capture). */
@@ -71,6 +81,8 @@ export interface AppSettings {
   autoTranslateTargetLang: string;
   /** When true, solve arithmetic into a vault badge — never overwrite the clipboard. Off by default. */
   autoEvalMath: boolean;
+  /** When true, Enter pastes into the previous app (SendInput). Off by default. */
+  directPasteEnabled: boolean;
   /** Slim floating vault (Win+V-style) instead of the full studio layout. */
   compactDock: boolean;
   /** Keep the main vault window above other apps. */
@@ -79,6 +91,10 @@ export interface AppSettings {
   maxHistory: number;
   /** UI scale percent (90–125). */
   uiScale: number;
+  /** Fonts, density, corners, layout and popup options (stored as one JSON blob). */
+  uiPrefs: UiPrefs;
+  /** KLIPY API key for the popup's GIF tab. Empty = use the key built into the release, if any. */
+  klipyApiKey: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -97,6 +113,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeGlassmorphic: false,
   themeTranslucency: 0,
   themeBackgroundImage: null,
+  themeBackdrop: "none",
   ignoreList: [],
   snipDelayEnabled: false,
   snipDelayMs: 3000,
@@ -106,12 +123,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoTranslateEnabled: false,
   autoTranslateTargetLang: "en",
   autoEvalMath: false,
+  directPasteEnabled: false,
   compactDock: false,
   mainAlwaysOnTop: false,
   /** Cap unpinned vault items (50–1000). Pinned are never trimmed by this. */
   maxHistory: 500,
   /** UI zoom percent (90–125). */
   uiScale: 100,
+  uiPrefs: DEFAULT_UI_PREFS,
+  klipyApiKey: "",
 };
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";

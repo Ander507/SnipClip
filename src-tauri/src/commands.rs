@@ -1,6 +1,6 @@
 use crate::apps;
 use crate::clipboard;
-use crate::db::{AppSettings, ClipboardItem, Database};
+use crate::db::{AppSettings, ClipboardItem, Database, ItemMeta};
 use crate::hotkeys::{self, HotkeyState};
 use crate::screenshot_popup::{self, ScreenshotPopupPayload};
 use crate::snip::{self, CaptureResult};
@@ -40,8 +40,92 @@ pub fn list_items(
 pub fn search_clipboard(
     db: State<'_, Arc<Database>>,
     query: String,
+    limit: Option<u32>,
 ) -> Result<Vec<ClipboardItem>, String> {
-    db.search_clipboard(&query)
+    let limit = limit.unwrap_or(25).clamp(5, 100);
+    db.search_clipboard(&query, limit as i64)
+}
+
+/// Thumbnails already encoded this session, keyed by (id, max edge, content length) so an
+/// edited image (different payload length) misses the cache instead of serving the old pixels.
+static THUMB_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<(i64, u32, usize), String>>,
+> = std::sync::OnceLock::new();
+
+const THUMB_CACHE_MAX: usize = 400;
+
+/// Downscaled data URL for an image / screenshot item (longest edge ≤ `max_size`).
+/// The stored `preview` is only 64 px — too small for grid tiles and popup cards.
+#[tauri::command]
+pub async fn item_thumbnail(
+    db: State<'_, Arc<Database>>,
+    id: i64,
+    max_size: u32,
+) -> Result<Option<String>, String> {
+    let db = db.inner().clone();
+    let max_size = max_size.clamp(32, 1024);
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+        let Some(item) = db.get(id)? else {
+            return Ok(None);
+        };
+        if item.content_type != "image" && item.content_type != "screenshot" {
+            return Ok(None);
+        }
+        let key = (id, max_size, item.content.len());
+        let cache = THUMB_CACHE.get_or_init(Default::default);
+        if let Some(hit) = cache.lock().map_err(|e| e.to_string())?.get(&key) {
+            return Ok(Some(hit.clone()));
+        }
+
+        let url = encode_thumbnail(&item.content, max_size)?;
+        let mut map = cache.lock().map_err(|e| e.to_string())?;
+        if map.len() >= THUMB_CACHE_MAX {
+            map.clear();
+        }
+        map.insert(key, url.clone());
+        Ok(Some(url))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Decode a full image data URL, shrink it to fit `max_size`, and re-encode —
+/// JPEG when fully opaque (much smaller), PNG when any pixel is translucent.
+fn encode_thumbnail(data_url: &str, max_size: u32) -> Result<String, String> {
+    use image::codecs::jpeg::JpegEncoder;
+    use image::imageops::FilterType;
+    use std::io::Cursor;
+
+    let bytes = decode_image_data_url(data_url)?;
+    let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+    let (w, h) = (img.width(), img.height());
+    let small = if w.max(h) > max_size {
+        // Fit the longest edge; never upscale
+        let scale = max_size as f64 / w.max(h) as f64;
+        let tw = ((w as f64 * scale).round() as u32).max(1);
+        let th = ((h as f64 * scale).round() as u32).max(1);
+        img.resize_exact(tw, th, FilterType::Triangle)
+    } else {
+        img
+    };
+
+    let rgba = small.to_rgba8();
+    let opaque = rgba.pixels().all(|p| p.0[3] == 255);
+    let mut buf = Cursor::new(Vec::new());
+    if opaque {
+        // JPEG has no alpha channel
+        JpegEncoder::new_with_quality(&mut buf, 82)
+            .encode_image(&small.to_rgb8())
+            .map_err(|e| e.to_string())?;
+        Ok(format!(
+            "data:image/jpeg;base64,{}",
+            B64.encode(buf.into_inner())
+        ))
+    } else {
+        rgba.write_to(&mut buf, image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        Ok(format!("data:image/png;base64,{}", B64.encode(buf.into_inner())))
+    }
 }
 
 #[tauri::command]
@@ -60,9 +144,173 @@ pub fn palette_copy_item(
     db: State<'_, Arc<Database>>,
     id: i64,
 ) -> Result<(), String> {
+    // legacy: same as paste — hide + Ctrl+V into previous app
+    let _ = paste_item(app, db, id, Some(crate::paste::PasteMode::Paste), None)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn paste_item(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    id: i64,
+    mode: Option<crate::paste::PasteMode>,
+    transform: Option<crate::transform::TransformKind>,
+) -> Result<crate::paste::PasteResult, String> {
+    paste_items(app, db, vec![id], mode, transform, None)
+}
+
+/// Paste several clips at once — merged into one paste, or walked through
+/// form fields with Tab / Enter between them.
+#[tauri::command]
+pub fn paste_items(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    ids: Vec<i64>,
+    mode: Option<crate::paste::PasteMode>,
+    transform: Option<crate::transform::TransformKind>,
+    field_key: Option<crate::paste::FieldKey>,
+) -> Result<crate::paste::PasteResult, String> {
+    let mut items = Vec::with_capacity(ids.len());
+    for id in &ids {
+        items.push(db.get(*id)?.ok_or_else(|| "item not found".to_string())?);
+    }
+    let settings = db.get_settings().unwrap_or_default();
+    let mut mode = mode.unwrap_or_default();
+    // Opt-in: without this, never synthesize Ctrl+V / type-out into another app
+    if !settings.direct_paste_enabled && mode != crate::paste::PasteMode::CopyOnly {
+        mode = crate::paste::PasteMode::CopyOnly;
+    }
+    // Our own clipboard write must not come back as a duplicate vault row
+    let result = clipboard::ignore_own_writes(|| {
+        crate::paste::paste_into_previous(
+            &app,
+            &items,
+            mode,
+            transform,
+            field_key.unwrap_or_default(),
+        )
+    })?;
+    for id in &ids {
+        let _ = db.record_use(*id);
+    }
+    Ok(result)
+}
+
+/// One page of KLIPY GIFs — trending when `query` is empty, search otherwise.
+#[tauri::command]
+pub async fn klipy_gifs(
+    db: State<'_, Arc<Database>>,
+    query: Option<String>,
+    page: Option<u32>,
+) -> Result<crate::klipy::GifPage, String> {
+    let db = db.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = db.get_settings().unwrap_or_default();
+        let key = crate::klipy::api_key(&settings)
+            .ok_or_else(|| crate::klipy::ERR_KEY_MISSING.to_string())?;
+        let customer_id = crate::klipy::customer_id(&db);
+        crate::klipy::fetch_gifs(&key, &customer_id, query.as_deref(), page.unwrap_or(1), 30)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Download a KLIPY GIF into the local cache and return its file path (for `paste_file`).
+#[tauri::command]
+pub async fn prepare_gif(app: AppHandle, url: String, slug: String) -> Result<String, String> {
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        crate::klipy::download_gif(&app, &url, &slug)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Paste a cached GIF as a real file (CF_HDROP) into the previous app. Never touches the vault.
+#[tauri::command]
+pub fn paste_file(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    path: String,
+    mode: Option<crate::paste::PasteMode>,
+) -> Result<crate::paste::PasteResult, String> {
+    let file = crate::klipy::resolve_cached_gif(&app, &path)?;
+    let item = ClipboardItem {
+        content_type: "gif".into(),
+        content: file.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    paste_unsaved(&app, &db, item, mode)
+}
+
+/// Paste ad-hoc text (emoji / kaomoji / symbols) into the previous app. Never touches the vault.
+#[tauri::command]
+pub fn paste_text(
+    app: AppHandle,
+    db: State<'_, Arc<Database>>,
+    text: String,
+    mode: Option<crate::paste::PasteMode>,
+) -> Result<crate::paste::PasteResult, String> {
+    // whitespace-only is allowed — the symbol picker has em spaces and the like
+    if text.is_empty() {
+        return Err("Nothing to paste".into());
+    }
+    if text.chars().count() > 10_000 {
+        return Err("Text is too long to paste (10,000 characters max)".into());
+    }
+    let item = ClipboardItem {
+        content_type: "text".into(),
+        content: text,
+        ..Default::default()
+    };
+    paste_unsaved(&app, &db, item, mode)
+}
+
+/// Shared tail of paste_file / paste_text: same opt-in gate as paste_items, and the
+/// staged clipboard write is marked as seen so the monitor never vaults it.
+fn paste_unsaved(
+    app: &AppHandle,
+    db: &Database,
+    item: ClipboardItem,
+    mode: Option<crate::paste::PasteMode>,
+) -> Result<crate::paste::PasteResult, String> {
+    let settings = db.get_settings().unwrap_or_default();
+    let mut mode = mode.unwrap_or_default();
+    // Opt-in: without this, never synthesize Ctrl+V / type-out into another app
+    if !settings.direct_paste_enabled && mode != crate::paste::PasteMode::CopyOnly {
+        mode = crate::paste::PasteMode::CopyOnly;
+    }
+    clipboard::ignore_own_writes(|| {
+        crate::paste::paste_into_previous(
+            app,
+            &[item],
+            mode,
+            None,
+            crate::paste::FieldKey::None,
+        )
+    })
+}
+
+/// Transform bar contents for a clip — content-aware hits first.
+#[tauri::command]
+pub fn transform_options(
+    db: State<'_, Arc<Database>>,
+    id: i64,
+) -> Result<Vec<crate::transform::TransformOption>, String> {
     let item = db.get(id)?.ok_or_else(|| "item not found".to_string())?;
-    copy_item_to_clipboard(&item)?;
-    crate::command_palette::hide_command_palette(&app)
+    Ok(crate::transform::options_for(&item.content))
+}
+
+/// Live preview of a transform without touching the clipboard.
+#[tauri::command]
+pub fn transform_preview(
+    db: State<'_, Arc<Database>>,
+    id: i64,
+    transform: crate::transform::TransformKind,
+) -> Result<String, String> {
+    let item = db.get(id)?.ok_or_else(|| "item not found".to_string())?;
+    crate::transform::apply(transform, &item.content)
 }
 
 #[tauri::command]
@@ -116,7 +364,7 @@ fn clipboard_text_for_item(item: &ClipboardItem) -> &str {
 #[tauri::command]
 pub fn copy_item(db: State<'_, Arc<Database>>, id: i64) -> Result<(), String> {
     let item = db.get(id)?.ok_or_else(|| "item not found".to_string())?;
-    copy_item_to_clipboard(&item)
+    clipboard::ignore_own_writes(|| copy_item_to_clipboard(&item))
 }
 
 // adding the open crate to rust so users can click links directly from their clipboard history
@@ -261,8 +509,9 @@ pub fn capture_region_wayland(
     let (capture, png_bytes, geometry) = crate::wayland::capture_region_wayland()?;
     let preview = build_thumb_preview(&capture.data_url)
         .unwrap_or_else(|_| format!("{}×{} snip", capture.width, capture.height));
+    let meta = screenshot_meta(capture.width, capture.height);
     let item = db
-        .insert("screenshot", &capture.data_url, &preview)
+        .insert_with_meta("screenshot", &capture.data_url, &preview, &meta)
         .map(|item| item.for_event())?;
 
     let file_path = {
@@ -309,8 +558,17 @@ pub fn save_snip_to_vault(
     // Build a tiny preview thumbnail so list stays light
     let preview =
         build_thumb_preview(&data_url).unwrap_or_else(|_| format!("{width}×{height} snip"));
-    db.insert("screenshot", &data_url, &preview)
+    db.insert_with_meta("screenshot", &data_url, &preview, &screenshot_meta(width, height))
         .map(|item| item.for_event())
+}
+
+/// Pixel size for a snip (0 = unknown → None). Snips have no clipboard source app.
+fn screenshot_meta(width: u32, height: u32) -> ItemMeta {
+    ItemMeta {
+        source_app: None,
+        width: Some(width).filter(|w| *w > 0),
+        height: Some(height).filter(|h| *h > 0),
+    }
 }
 
 #[tauri::command]
@@ -323,8 +581,14 @@ pub fn update_vault_image(
 ) -> Result<ClipboardItem, String> {
     let preview =
         build_thumb_preview(&data_url).unwrap_or_else(|_| format!("{width}×{height} snip"));
-    db.update_image_content(id, &data_url, &preview)
-        .map(|item| item.for_event())
+    db.update_image_content(
+        id,
+        &data_url,
+        &preview,
+        Some(width).filter(|w| *w > 0),
+        Some(height).filter(|h| *h > 0),
+    )
+    .map(|item| item.for_event())
 }
 
 fn build_thumb_preview(data_url: &str) -> Result<String, String> {
@@ -355,6 +619,7 @@ pub fn toggle_main_window(app: AppHandle) -> Result<(), String> {
         if win.is_visible().unwrap_or(false) {
             let _ = win.hide();
         } else {
+            crate::paste::capture_target_now(&app);
             let _ = win.show();
             let _ = win.unminimize();
             let _ = win.set_focus();
@@ -366,6 +631,7 @@ pub fn toggle_main_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn show_main_window(app: AppHandle) -> Result<(), String> {
+    crate::paste::capture_target_now(&app);
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.unminimize();
@@ -651,6 +917,10 @@ pub fn update_settings(
         }
     }
 
+    crate::themes::sync_window_backgrounds(&app, &saved);
+    // Floating windows (palette, snipper, recorder bar, popups) re-read the theme on this.
+    let _ = app.emit("settings-changed", ());
+
     Ok(saved)
 }
 
@@ -885,6 +1155,9 @@ pub fn unlock_vault(
         "vault-lock-changed",
         &serde_json::json!({ "locked": false, "passwordSet": true }),
     );
+    // Launch read the placeholder DB's default settings — every window needs the real theme now.
+    crate::themes::sync_window_backgrounds(&app, &settings);
+    let _ = app.emit("settings-changed", ());
     Ok(())
 }
 
@@ -919,7 +1192,7 @@ pub fn finalize_screenshot(
     let preview =
         build_thumb_preview(&data_url).unwrap_or_else(|_| format!("{width}×{height} snip"));
     let item = db
-        .insert("screenshot", &data_url, &preview)
+        .insert_with_meta("screenshot", &data_url, &preview, &screenshot_meta(width, height))
         .map(|item| item.for_event())?;
 
     let payload = ScreenshotPopupPayload {
@@ -1035,12 +1308,8 @@ pub fn finalize_recording(
         width,
         height,
         item: ClipboardItem {
-            id: 0,
             content_type: "video".into(),
-            content: String::new(),
-            preview: String::new(),
-            is_pinned: false,
-            created_at: String::new(),
+            ..Default::default()
         },
     })
 }

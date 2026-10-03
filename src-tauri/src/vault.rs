@@ -60,19 +60,6 @@ pub fn hash_password(password: &str, salt: &[u8]) -> [u8; 32] {
     hash
 }
 
-pub fn verify_password(password: &str, hash: &[u8], salt: &[u8]) -> bool {
-    let candidate = hash_password(password, salt);
-    let mut diff = 0u8;
-    for (a, b) in candidate.iter().zip(hash.iter()) {
-        diff |= a ^ b;
-    }
-    // Length mismatch must not look like success
-    if hash.len() != candidate.len() {
-        return false;
-    }
-    diff == 0
-}
-
 fn random_nonce() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce);

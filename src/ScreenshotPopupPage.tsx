@@ -5,6 +5,7 @@ import { emitTo } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Pencil, X } from "lucide-react";
 import { closeScreenshotPopup } from "./lib/api";
+import { useThemeSync } from "./lib/themeSync";
 
 export interface ScreenshotPopupData {
   vaultId: number;
@@ -25,6 +26,7 @@ export function ScreenshotPopupPage() {
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  useThemeSync({ effects: false });
 
   useEffect(() => {
     document.documentElement.classList.add("popup-mode");
@@ -123,10 +125,10 @@ export function ScreenshotPopupPage() {
         visible ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"
       }`}
     >
-      <div className="flex h-full items-stretch gap-2 rounded-xl border border-white/15 bg-[#1a1a1ae6] p-2 shadow-2xl backdrop-blur-md">
+      <div className="flex h-full items-stretch gap-2 rounded-xl border border-line-strong bg-raised/95 p-2 shadow-2xl backdrop-blur-md">
         <button
           type="button"
-          className="group relative min-w-0 flex-1 overflow-hidden rounded-lg border border-white/10 bg-black/30 disabled:opacity-50"
+          className="group relative min-w-0 flex-1 overflow-hidden rounded-lg border border-line bg-inset disabled:opacity-50"
           onClick={() => void handleEdit()}
           disabled={busy}
           title={isVideo || isGif ? "Edit recording" : "Edit screenshot"}
@@ -153,7 +155,7 @@ export function ScreenshotPopupPage() {
               className="h-full w-full object-cover transition group-hover:scale-[1.02]"
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-[10px] text-white/70">
+            <div className="flex h-full items-center justify-center text-[10px] text-fg-muted">
               {isVideo ? "Video" : isGif ? "GIF" : "Screenshot"}
             </div>
           )}
@@ -163,7 +165,7 @@ export function ScreenshotPopupPage() {
             type="button"
             title="Edit"
             disabled={busy}
-            className="rounded-md p-1.5 text-white/80 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+            className="rounded-md p-1.5 text-fg-secondary transition hover:bg-hover hover:text-fg disabled:opacity-50"
             onClick={() => void handleEdit()}
           >
             <Pencil size={14} />
@@ -172,7 +174,7 @@ export function ScreenshotPopupPage() {
             type="button"
             title="Dismiss"
             disabled={busy}
-            className="rounded-md p-1.5 text-white/60 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+            className="rounded-md p-1.5 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-50"
             onClick={() => void dismiss()}
           >
             <X size={14} />

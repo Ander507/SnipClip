@@ -10,12 +10,12 @@ import { ImageViewerModal } from "./components/ImageViewerModal";
 import {
   clearHistory,
   copyItem,
+  copyText,
   deleteItem,
   listItems,
   togglePin,
   openUrl,
   updateClipboardItem,
-  getSettings,
   formatHotkeyShort,
   beginSnip,
   delayedSnip,
@@ -28,12 +28,23 @@ import {
   showMainWindow,
   openVideoEditor,
   getCategoryCounts,
-  copyText,
+  pasteItem,
   updateSettings,
+  isOcrAvailable,
 } from "./lib/api";
+import { AlertCircle, CheckCircle2, Info } from "lucide-react";
+import clsx from "clsx";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
-import { applyTheme, applyUiScale } from "./lib/theme";
+import { applyUiScale } from "./lib/theme";
+import {
+  applySavedTheme,
+  fetchSettingsWithRetry,
+  themeInputFromSettings,
+} from "./lib/themeSync";
+import { normalizeAppSettings } from "./lib/settings";
+import type { UiPrefs } from "./lib/uiPrefs";
+import { forgetThumbnails } from "./lib/thumbnails";
 import { itemMatchesCategory, itemMatchesSearch } from "./lib/search";
 import { useStatusToast } from "./lib/useStatusToast";
 import { parseTranslatedContent } from "./lib/translatedContent";
@@ -59,6 +70,7 @@ function App() {
   const [capture, setCapture] = useState<CaptureResult | null>(null);
   const [status, setStatus] = useStatusToast();
   const [view, setView] = useState<"vault" | "settings">("vault");
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -69,6 +81,12 @@ function App() {
   const [vaultUnlocking, setVaultUnlocking] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [ocrAvailable, setOcrAvailable] = useState(false);
+  // Settings previews layout prefs (sidebar side, icons…) before they're saved
+  const [uiPreview, setUiPreview] = useState<UiPrefs | null>(null);
+  const ui = uiPreview ?? settings.uiPrefs;
+  // Deleted rows wait here a few seconds so the toast can offer Undo
+  const pendingDeleteRef = useRef<{ id: number; timer: number } | null>(null);
   const categoryRef = useRef(category);
   categoryRef.current = category;
   const debouncedQueryRef = useRef(debouncedQuery);
@@ -77,9 +95,15 @@ function App() {
   const selectedIdRef = useRef<number | null>(null);
   selectedIdRef.current = selectedId;
 
+  // Set when a fetch fails before the backend is ready, so the settings load can retry it.
+  const loadFailedRef = useRef(false);
+
   const refresh = useCallback(async () => {
     try {
-      const data = (await listItems(category, debouncedQuery)) ?? [];
+      const pendingId = pendingDeleteRef.current?.id;
+      const data = ((await listItems(category, debouncedQuery)) ?? []).filter(
+        (i) => i.id !== pendingId
+      );
       setItems(Array.isArray(data) ? data : []);
       setSelectedId((prev) => {
         if (prev && data.some((i) => i.id === prev)) return prev;
@@ -87,17 +111,31 @@ function App() {
       });
     } catch (err) {
       console.error(err);
+      loadFailedRef.current = true;
       setItems([]);
       setSelectedId(null);
     }
   }, [category, debouncedQuery]);
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
 
   const refreshCounts = useCallback(async () => {
     try {
       setCounts(await getCategoryCounts());
     } catch (err) {
       console.error(err);
+      loadFailedRef.current = true;
     }
+  }, []);
+
+  /** Normalize persisted settings into state and apply theme, prefs, scale and pin-on-top. */
+  const applyLoadedSettings = useCallback((s: AppSettings): AppSettings => {
+    const next = normalizeAppSettings(s);
+    setSettings(next);
+    applySavedTheme(themeInputFromSettings(next), { uiPrefs: next.uiPrefs });
+    applyUiScale(next.uiScale);
+    void setMainAlwaysOnTop(next.mainAlwaysOnTop).catch(console.error);
+    return next;
   }, []);
 
   useEffect(() => {
@@ -110,48 +148,37 @@ function App() {
   }, [refresh]);
 
   useEffect(() => {
-    void getSettings()
+    let cancelled = false;
+    // Retries until setup() has managed the database — a failed first call used to leave
+    // the default theme up until Settings was opened.
+    void fetchSettingsWithRetry()
       .then((s) => {
-        const next = {
-          ...s,
-          ignoreList: s.ignoreList ?? [],
-          themeUseCustom: s.themeUseCustom ?? false,
-          themeCustom: s.themeCustom ?? null,
-          themeGlassmorphic: s.themeGlassmorphic ?? false,
-          themeTranslucency: s.themeTranslucency ?? 0,
-          themeBackgroundImage: s.themeBackgroundImage ?? null,
-          snipDelayEnabled: s.snipDelayEnabled ?? false,
-          snipDelayMs: s.snipDelayMs ?? 3000,
-          sidebarTabs: s.sidebarTabs ?? DEFAULT_SETTINGS.sidebarTabs,
-          autoTranslateEnabled: s.autoTranslateEnabled ?? false,
-          autoTranslateTargetLang: s.autoTranslateTargetLang ?? "en",
-          autoEvalMath: s.autoEvalMath ?? false,
-          compactDock: s.compactDock ?? false,
-          mainAlwaysOnTop: s.mainAlwaysOnTop ?? false,
-          maxHistory: s.maxHistory ?? 500,
-          uiScale: s.uiScale ?? 100,
-          hotkeyDock: s.hotkeyDock ?? DEFAULT_SETTINGS.hotkeyDock,
-        };
-        setSettings(next);
-        applyTheme(next);
-        applyUiScale(next.uiScale);
-        void setMainAlwaysOnTop(next.mainAlwaysOnTop).catch(console.error);
+        if (cancelled) return;
+        const next = applyLoadedSettings(s);
         if (next.compactDock) {
           void applyCompactDockLayout().catch(console.error);
         }
-      })
-      .catch(console.error);
-    void getClipboardPaused().then(setClipboardPaused).catch(console.error);
-    void getCategoryCounts().then(setCounts).catch(console.error);
-    void isVaultLocked()
-      .then((locked) => {
-        if (locked) {
-          setVaultLocked(true);
-          void emit("vault-locked");
+        if (loadFailedRef.current) {
+          loadFailedRef.current = false;
+          void refreshRef.current();
         }
+        void refreshCounts();
+        void isOcrAvailable().then(setOcrAvailable).catch(console.error);
+        void getClipboardPaused().then(setClipboardPaused).catch(console.error);
+        void isVaultLocked()
+          .then((locked) => {
+            if (locked) {
+              setVaultLocked(true);
+              void emit("vault-locked");
+            }
+          })
+          .catch(console.error);
       })
       .catch(console.error);
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [applyLoadedSettings, refreshCounts]);
 
   const startSnip = useCallback(async () => {
     try {
@@ -164,7 +191,7 @@ function App() {
         await beginSnip();
       }
     } catch (err) {
-      setStatus(`Snip failed: ${err}`);
+      setStatus(`Snip failed: ${err}`, 2400, { tone: "error" });
     }
   }, [settings.snipDelayEnabled, settings.snipDelayMs]);
 
@@ -173,7 +200,7 @@ function App() {
       setStatus(`Snipping in ${Math.round(delayMs / 1000)}s… switch apps, hands off keyboard`, delayMs);
       await delayedSnip(delayMs);
     } catch (err) {
-      setStatus(`Snip failed: ${err}`);
+      setStatus(`Snip failed: ${err}`, 2400, { tone: "error" });
     }
   }, []);
 
@@ -194,6 +221,13 @@ function App() {
         return [item, ...base.filter((i) => i.id !== item.id)].slice(0, 500);
       });
       setSelectedId(item.id);
+    }).then((u) => unsubs.push(u));
+
+    // The popup's GIF tab links here when no KLIPY key is set
+    void listen<{ section?: string }>("open-settings", (event) => {
+      setSettingsSection(event.payload?.section ?? null);
+      setView("settings");
+      void showMainWindow();
     }).then((u) => unsubs.push(u));
 
     void listen("focus-search", () => {
@@ -217,10 +251,11 @@ function App() {
             : `${lines} line${lines === 1 ? "" : "s"}`;
         setStatus(
           preview ? `OCR copied · ${countBit}: ${preview}` : `OCR copied · ${countBit}`,
-          2800
+          2800,
+          { tone: "success" }
         );
       } else {
-        setStatus("OCR text copied", 2000);
+        setStatus("OCR text copied", 2000, { tone: "success" });
       }
     }).then((u) => unsubs.push(u));
 
@@ -245,7 +280,7 @@ function App() {
 
     void listen<{ message?: string }>("hotkey-conflict", (event) => {
       const msg = event.payload?.message?.trim() || "A hotkey is already taken by another app";
-      setStatus(`Hotkey conflict: ${msg}`, 6000);
+      setStatus(`Hotkey conflict: ${msg}`, 6000, { tone: "error" });
     }).then((u) => unsubs.push(u));
 
     void listen<{ path?: string }>("vault-imported", (event) => {
@@ -261,6 +296,9 @@ function App() {
       if (!locked) {
         setVaultUnlocking(false);
         void refresh();
+        void refreshCounts();
+        // Launch read the locked placeholder's default settings — load the real theme now.
+        void fetchSettingsWithRetry().then(applyLoadedSettings).catch(console.error);
       }
     }).then((u) => unsubs.push(u));
 
@@ -279,7 +317,7 @@ function App() {
             : full?.preview?.startsWith("data:image") ? full.preview
             : null;
           if (!src) {
-            setStatus("Screenshot not found", 2000);
+            setStatus("Screenshot not found", 2000, { tone: "error" });
             return;
           }
           setCapture({
@@ -291,22 +329,24 @@ function App() {
           });
           setStatus(null);
         } catch (err) {
-          setStatus(String(err), 2000);
+          setStatus(String(err), 2400, { tone: "error" });
         }
       })();
     }).then((u) => unsubs.push(u));
 
     return () => unsubs.forEach((u) => u());
-  }, [refresh, refreshCounts]);
+  }, [refresh, refreshCounts, applyLoadedSettings]);
 
   async function handleExtractText(id: number) {
     try {
       const text = await copyTextFromImage(id);
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0).length;
       const chars = text.length;
-      setStatus(`OCR copied · ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars`, 2200);
+      setStatus(`OCR copied · ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars`, 2200, {
+        tone: "success",
+      });
     } catch (err) {
-      setStatus(String(err), 2000);
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -329,16 +369,42 @@ function App() {
       await copyItem(id);
       setStatus(
         item?.contentType === "translated" ? "Copied translation" : "Copied",
-        1200
+        1200,
+        { tone: "success" }
       );
     } catch (err) {
       const msg = String(err);
       if (msg.toLowerCase().includes("not found")) {
-        setStatus("Item no longer available", 1600);
+        setStatus("Item no longer available", 1600, { tone: "error" });
         await refresh();
       } else {
-        setStatus(msg, 1600);
+        setStatus(msg, 2400, { tone: "error" });
       }
+    }
+  }
+
+  async function handlePaste(
+    id: number,
+    mode: "paste" | "typeOut" | "copyOnly" = "paste"
+  ) {
+    try {
+      const result = await pasteItem(id, mode);
+      if (mode === "copyOnly") {
+        setStatus("Copied", 1200, { tone: "success" });
+        return;
+      }
+      const where = result.targetTitle?.trim();
+      setStatus(
+        where
+          ? `${result.typed ? "Typed" : "Pasted"} → ${where.slice(0, 40)}`
+          : result.typed
+            ? "Typed into previous app"
+            : "Pasted into previous app",
+        1400,
+        { tone: "success" }
+      );
+    } catch (err) {
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -347,18 +413,18 @@ function App() {
       const item =
         items.find((i) => i.id === id) ?? (await getItem(id));
       if (!item) {
-        setStatus("Item no longer available", 1600);
+        setStatus("Item no longer available", 1600, { tone: "error" });
         return;
       }
       const { original } = parseTranslatedContent(item.content || "");
       if (!original) {
-        setStatus("No original text", 1600);
+        setStatus("No original text", 1600, { tone: "error" });
         return;
       }
       await copyText(original);
-      setStatus("Copied original", 1200);
+      setStatus("Copied original", 1200, { tone: "success" });
     } catch (err) {
-      setStatus(String(err), 1600);
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -367,18 +433,18 @@ function App() {
       const item =
         items.find((i) => i.id === id) ?? (await getItem(id));
       if (!item) {
-        setStatus("Item no longer available", 1600);
+        setStatus("Item no longer available", 1600, { tone: "error" });
         return;
       }
       const { result } = parseMathContent(item.content || "", item.preview || "");
       if (!result) {
-        setStatus("No result to copy", 1600);
+        setStatus("No result to copy", 1600, { tone: "error" });
         return;
       }
       await copyText(result);
-      setStatus("Copied result", 1200);
+      setStatus("Copied result", 1200, { tone: "success" });
     } catch (err) {
-      setStatus(String(err), 1600);
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -386,16 +452,10 @@ function App() {
     const next = { ...settings, ...patch };
     setSettings(next);
     try {
-      const saved = await updateSettings(next);
-      setSettings({
-        ...saved,
-        autoEvalMath: saved.autoEvalMath ?? false,
-        compactDock: saved.compactDock ?? false,
-        mainAlwaysOnTop: saved.mainAlwaysOnTop ?? false,
-      });
+      setSettings(normalizeAppSettings(await updateSettings(next)));
     } catch (err) {
       console.error(err);
-      setStatus(String(err), 2000);
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -418,6 +478,13 @@ function App() {
     const next = !settings.mainAlwaysOnTop;
     await setMainAlwaysOnTop(next).catch(console.error);
     await persistWindowPrefs({ mainAlwaysOnTop: next });
+  }
+
+  function handleToggleSidebar() {
+    const sidebarCollapsed = !ui.sidebarCollapsed;
+    // Settings may be previewing prefs — keep that preview in step with the button
+    setUiPreview((prev) => (prev ? { ...prev, sidebarCollapsed } : prev));
+    void persistWindowPrefs({ uiPrefs: { ...settings.uiPrefs, sidebarCollapsed } });
   }
 
   const toggleDockRef = useRef(handleToggleCompact);
@@ -451,6 +518,11 @@ function App() {
     };
   }, [refresh, refreshCounts]);
 
+  const gridView =
+    !settings.compactDock &&
+    ui.imageView === "grid" &&
+    (category === "images" || category === "screenshots");
+
   const dockItems = settings.compactDock
     ? [
         ...items.filter((i) => i.isPinned),
@@ -464,30 +536,59 @@ function App() {
       await refresh();
       await refreshCounts();
     } catch (err) {
-      setStatus(String(err), 1600);
+      setStatus(String(err), 2400, { tone: "error" });
       await refresh();
       await refreshCounts();
     }
   }
 
-  async function handleDelete(id: number) {
-    try {
-      await deleteItem(id);
-      if (previewId === id) closeImagePreview();
-      await refresh();
-      await refreshCounts();
-    } catch (err) {
-      setStatus(String(err), 1600);
-      await refresh();
-      await refreshCounts();
-    }
+  /** Run the delete that's waiting on its Undo window (or nothing). */
+  const commitPendingDelete = useCallback(() => {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    pendingDeleteRef.current = null;
+    void deleteItem(pending.id)
+      .then(() => refreshCounts())
+      .catch((err) => {
+        setStatus(String(err), 2400, { tone: "error" });
+        void refreshRef.current();
+      });
+  }, [refreshCounts, setStatus]);
+
+  // Don't drop a pending delete if the window reloads mid-countdown
+  useEffect(() => commitPendingDelete, [commitPendingDelete]);
+
+  function handleDelete(id: number) {
+    commitPendingDelete();
+    if (previewId === id) closeImagePreview();
+    const list = settings.compactDock ? dockItems : items;
+    const idx = list.findIndex((i) => i.id === id);
+    const neighbor = list[idx + 1] ?? list[idx - 1] ?? null;
+    setItems((prev) => prev.filter((i) => i.id !== id));
+    setSelectedId((cur) => (cur === id ? neighbor?.id ?? null : cur));
+    const timer = window.setTimeout(commitPendingDelete, 5000);
+    pendingDeleteRef.current = { id, timer };
+    setStatus("Deleted", 5000, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const pending = pendingDeleteRef.current;
+          if (!pending || pending.id !== id) return;
+          window.clearTimeout(pending.timer);
+          pendingDeleteRef.current = null;
+          setStatus(null);
+          void refresh().then(() => setSelectedId(id));
+        },
+      },
+    });
   }
 
   async function handleOpenLink(url: string) {
     try {
       await openUrl(url);
     } catch (err) {
-      setStatus(String(err), 1600);
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -496,7 +597,7 @@ function App() {
       const full = await getItem(id);
       const path = full?.content?.trim();
       if (!path) {
-        setStatus("Recording file not found", 2000);
+        setStatus("Recording file not found", 2000, { tone: "error" });
         return;
       }
       await openVideoEditor({
@@ -506,7 +607,7 @@ function App() {
         height: 720,
       });
     } catch (err) {
-      setStatus(String(err), 2000);
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -514,15 +615,16 @@ function App() {
     try {
       await updateClipboardItem(id, content);
       await refresh();
-      setStatus("Snippet updated", 1200);
+      setStatus("Snippet updated", 1200, { tone: "success" });
     } catch (err) {
-      setStatus(String(err), 1600);
+      setStatus(String(err), 2400, { tone: "error" });
       await refresh();
     }
   }
 
   async function handleClear() {
     try {
+      commitPendingDelete();
       closeImagePreview();
       setCapture(null);
       setQuery("");
@@ -537,10 +639,11 @@ function App() {
         pinnedLeft > 0
           ? `Cleared · ${pinnedLeft} pinned item${pinnedLeft === 1 ? "" : "s"} kept`
           : "History cleared",
-        1800
+        1800,
+        { tone: "success" }
       );
     } catch (err) {
-      setStatus(String(err), 1600);
+      setStatus(String(err), 2400, { tone: "error" });
       await refresh();
       await refreshCounts();
     }
@@ -558,7 +661,7 @@ function App() {
         setPreviewSrc(full.preview);
       }
     } catch (err) {
-      setStatus(String(err));
+      setStatus(String(err), 2400, { tone: "error" });
       setPreviewId(null);
     } finally {
       setPreviewLoading(false);
@@ -590,7 +693,7 @@ function App() {
         vaultId: previewId ?? undefined,
       });
     } catch (err) {
-      setStatus(String(err), 1600);
+      setStatus(String(err), 2400, { tone: "error" });
     }
   }
 
@@ -624,7 +727,8 @@ function App() {
         return;
       }
 
-      if (e.key === "ArrowDown" || e.key === "j") {
+      const gridNav = gridView && !inInput;
+      if (e.key === "ArrowDown" || e.key === "j" || (gridNav && e.key === "ArrowRight")) {
         if (e.key === "j" && inInput) return;
         e.preventDefault();
         const list = navItems();
@@ -635,7 +739,7 @@ function App() {
         });
       }
 
-      if (e.key === "ArrowUp" || e.key === "k") {
+      if (e.key === "ArrowUp" || e.key === "k" || (gridNav && e.key === "ArrowLeft")) {
         if (e.key === "k" && inInput) return;
         e.preventDefault();
         const list = navItems();
@@ -648,7 +752,38 @@ function App() {
 
       if (e.key === "Enter" && selectedIdRef.current != null) {
         e.preventDefault();
-        void handleCopy(selectedIdRef.current);
+        const id = selectedIdRef.current;
+        const canPaste = settings.directPasteEnabled;
+        if (e.shiftKey) {
+          if (canPaste) void handlePaste(id, "typeOut");
+          else void handleCopy(id);
+        } else if (e.ctrlKey || e.metaKey) {
+          if (canPaste) {
+            if (settings.compactDock) {
+              void handlePaste(id, "copyOnly");
+            } else {
+              void handlePaste(id, "paste");
+            }
+          } else {
+            void handleCopy(id);
+          }
+        } else if (settings.compactDock && canPaste) {
+          void handlePaste(id, "paste");
+        } else {
+          void handleCopy(id);
+        }
+      }
+
+      // Space previews like Quick Look — images open the viewer, recordings the editor
+      if (e.key === " " && !inInput && selectedIdRef.current != null) {
+        const item = navItems().find((i) => i.id === selectedIdRef.current);
+        if (item?.contentType === "image" || item?.contentType === "screenshot") {
+          e.preventDefault();
+          void openImagePreview(item.id);
+        } else if (item?.contentType === "video" || item?.contentType === "gif") {
+          e.preventDefault();
+          void handleEditVideo(item.id);
+        }
       }
 
       if (
@@ -657,7 +792,7 @@ function App() {
         selectedIdRef.current != null
       ) {
         e.preventDefault();
-        void handleDelete(selectedIdRef.current);
+        handleDelete(selectedIdRef.current);
       }
 
       if (e.key === "p" && !inInput && selectedIdRef.current != null) {
@@ -683,7 +818,16 @@ function App() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, capture, view, counts, settings.sidebarTabs, settings.compactDock]);
+  }, [
+    items,
+    capture,
+    view,
+    counts,
+    gridView,
+    settings.sidebarTabs,
+    settings.compactDock,
+    settings.directPasteEnabled,
+  ]);
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-app text-fg">
@@ -697,7 +841,12 @@ function App() {
         onToggleCompact={() => void handleToggleCompact()}
         onToggleAlwaysOnTop={() => void handleToggleAlwaysOnTop()}
       />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div
+        className={clsx(
+          "flex min-h-0 flex-1 overflow-hidden",
+          ui.sidebarPosition === "right" && "flex-row-reverse"
+        )}
+      >
         {!settings.compactDock && (
           <Sidebar
             category={category}
@@ -707,33 +856,35 @@ function App() {
             }}
             onSnip={() => void startSnip()}
             onDelayedSnip={() => void startDelayedSnip(3000)}
-            onClear={() => void handleClear()}
-            onSettings={() => setView("settings")}
+            onSettings={() => {
+              setSettingsSection(null);
+              setView("settings");
+            }}
             settingsOpen={view === "settings"}
-            count={counts.all ?? items.length}
             counts={counts}
             sidebarTabs={settings.sidebarTabs}
             snipHotkeyLabel={formatHotkeyShort(settings.hotkeySnip)}
             snipDelayEnabled={settings.snipDelayEnabled}
+            position={ui.sidebarPosition}
+            collapsed={ui.sidebarCollapsed}
+            onToggleCollapsed={handleToggleSidebar}
+            tabColors={ui.tabColors}
+            tabIcons={ui.tabIcons}
           />
         )}
         <main className="flex min-w-0 flex-1 flex-col bg-app">
           {view === "settings" ? (
             <SettingsView
-              onClose={() => setView("vault")}
+              onClose={() => {
+                setView("vault");
+                setSettingsSection(null);
+              }}
+              initialSection={settingsSection}
+              historyCount={counts.all ?? items.length}
+              onClearHistory={() => handleClear()}
+              onPreviewUiPrefs={setUiPreview}
               onSaved={(s) => {
-                const next = {
-                  ...s,
-                  autoEvalMath: s.autoEvalMath ?? false,
-                  compactDock: s.compactDock ?? false,
-                  mainAlwaysOnTop: s.mainAlwaysOnTop ?? false,
-                  maxHistory: s.maxHistory ?? 500,
-                  uiScale: s.uiScale ?? 100,
-                };
-                setSettings(next);
-                applyTheme(next);
-                applyUiScale(next.uiScale);
-                void setMainAlwaysOnTop(next.mainAlwaysOnTop).catch(console.error);
+                const next = applyLoadedSettings(s);
                 if (next.compactDock) {
                   void applyCompactDockLayout().catch(console.error);
                 } else {
@@ -747,10 +898,16 @@ function App() {
                 <SearchBar ref={searchRef} value={query} onChange={setQuery} />
                 <p className="mt-2 text-[11px] text-fg-faint">
                   {settings.compactDock
-                    ? "Pins + last 10 · ↑↓ navigate · Enter copy · Pin locks favorites"
-                    : `↑↓ navigate · Enter copy · ${formatHotkeyShort(settings.hotkeyClipboard)} toggle${
-                        clipboardPaused ? " · listening paused" : ""
-                      } · 1–9 switch tab`}
+                    ? settings.directPasteEnabled
+                      ? "Pins + last 10 · Enter paste · Shift+Enter type · Ctrl+Enter copy"
+                      : "Pins + last 10 · Enter copy · enable Direct paste in Settings"
+                    : settings.directPasteEnabled
+                      ? `↑↓ navigate · Enter copy · Ctrl+Enter paste · Space preview · ${formatHotkeyShort(settings.hotkeyClipboard)} toggle${
+                          clipboardPaused ? " · listening paused" : ""
+                        } · 1–9 switch tab`
+                      : `↑↓ navigate · Enter copy · Space preview · ${formatHotkeyShort(settings.hotkeyClipboard)} toggle${
+                          clipboardPaused ? " · listening paused" : ""
+                        } · 1–9 switch tab`}
                 </p>
                 {settings.compactDock && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -783,13 +940,22 @@ function App() {
                 selectedId={selectedId}
                 hotkeySnip={formatHotkeyShort(settings.hotkeySnip)}
                 hotkeyPalette="Alt+C"
+                ocrAvailable={ocrAvailable}
+                groupByDay
+                density={ui.density}
+                view={gridView ? "grid" : "list"}
+                thumbSize={ui.thumbSize}
                 onSelect={setSelectedId}
-                onCopy={(id) => void handleCopy(id)}
+                onCopy={(id) =>
+                  void (settings.compactDock && settings.directPasteEnabled
+                    ? handlePaste(id, "paste")
+                    : handleCopy(id))
+                }
                 onCopyOriginal={(id) => void handleCopyOriginal(id)}
                 onCopyMathResult={(id) => void handleCopyMathResult(id)}
                 onExtractText={(id) => void handleExtractText(id)}
                 onPin={(id) => void handlePin(id)}
-                onDelete={(id) => void handleDelete(id)}
+                onDelete={handleDelete}
                 onPreviewImage={(id) => void openImagePreview(id)}
                 onEditVideo={(id) => void handleEditVideo(id)}
                 onOpenLink={(url) => void handleOpenLink(url)}
@@ -803,9 +969,29 @@ function App() {
       {status && (
         <div
           role="status"
-          className="pointer-events-none absolute bottom-4 left-1/2 z-[200] max-w-[min(90vw,28rem)] -translate-x-1/2 rounded-lg border border-line bg-raised px-3.5 py-2 text-center text-[12px] text-fg shadow-lg"
+          className={clsx(
+            "absolute bottom-4 left-1/2 z-[200] flex max-w-[min(90vw,28rem)] -translate-x-1/2 items-center gap-2 rounded-lg border bg-raised py-2 pl-3 text-[12px] text-fg shadow-lg",
+            status.action ? "pointer-events-auto pr-1.5" : "pointer-events-none pr-3.5",
+            status.tone === "error" ? "border-danger/40" : "border-line"
+          )}
         >
-          {status}
+          {status.tone === "error" ? (
+            <AlertCircle size={14} className="shrink-0 text-danger" />
+          ) : status.tone === "success" ? (
+            <CheckCircle2 size={14} className="shrink-0 text-accent" />
+          ) : (
+            <Info size={14} className="shrink-0 text-fg-muted" />
+          )}
+          <span className="min-w-0 break-words">{status.message}</span>
+          {status.action && (
+            <button
+              type="button"
+              onClick={status.action.onClick}
+              className="ml-1 shrink-0 rounded-md px-2 py-1 text-[12px] font-semibold text-accent transition hover:bg-hover"
+            >
+              {status.action.label}
+            </button>
+          )}
         </div>
       )}
 
@@ -826,7 +1012,10 @@ function App() {
         <SnipOverlay
           capture={capture}
           onClose={() => setCapture(null)}
-          onSaved={() => void refresh()}
+          onSaved={() => {
+            if (capture.vaultId != null) forgetThumbnails(capture.vaultId);
+            void refresh();
+          }}
         />
       )}
 

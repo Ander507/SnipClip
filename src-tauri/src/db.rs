@@ -9,7 +9,7 @@ pub const DEFAULT_HOTKEY_SNIP: &str = "Control+Shift+S";
 pub const DEFAULT_HOTKEY_RECORD: &str = "Control+Shift+R";
 pub const DEFAULT_HOTKEY_DOCK: &str = "Control+Shift+D";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardItem {
     pub id: i64,
@@ -18,6 +18,38 @@ pub struct ClipboardItem {
     pub preview: String,
     pub is_pinned: bool,
     pub created_at: String,
+    /// Process that owned the clipboard (e.g. "Code.exe"). None for snips and older rows.
+    #[serde(default)]
+    pub source_app: Option<String>,
+    /// Pixel size for image / screenshot items.
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+}
+
+/// Optional capture metadata stored alongside a new item.
+#[derive(Debug, Clone, Default)]
+pub struct ItemMeta {
+    pub source_app: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+/// Shared row mapper — every ClipboardItem SELECT returns these columns in this order:
+/// `id, content_type, content, preview, is_pinned, created_at, source_app, width, height`.
+fn item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardItem> {
+    Ok(ClipboardItem {
+        id: row.get(0)?,
+        content_type: row.get(1)?,
+        content: row.get(2)?,
+        preview: row.get(3)?,
+        is_pinned: row.get::<_, i64>(4)? != 0,
+        created_at: row.get(5)?,
+        source_app: row.get(6)?,
+        width: row.get::<_, Option<i64>>(7)?.and_then(|v| u32::try_from(v).ok()),
+        height: row.get::<_, Option<i64>>(8)?.and_then(|v| u32::try_from(v).ok()),
+    })
 }
 
 impl ClipboardItem {
@@ -54,9 +86,9 @@ pub struct AppSettings {
     pub last_cleanup: i64,
     /// Launch SnipClip at login (tray / --minimized).
     pub launch_at_startup: bool,
-    /// "dark" | "light"
+    /// "dark" | "light" | "system"
     pub theme_mode: String,
-    /// "cyan" | "purple" | "green" | "orange"
+    /// Preset id ("cyan", "blue", … see ACCENT_PRESETS) or a lowercase "#rrggbb" hex.
     pub accent_color: String,
     #[serde(default)]
     pub theme_use_custom: bool,
@@ -97,6 +129,9 @@ pub struct AppSettings {
     /// When true, solvable arithmetic is stored as math with a result badge (clipboard stays raw).
     #[serde(default)]
     pub auto_eval_math: bool,
+    /// When true, Enter in the popup/dock pastes into the previous app (SendInput). Off by default.
+    #[serde(default)]
+    pub direct_paste_enabled: bool,
     /// Slim Win+V-style vault layout (narrow floating card).
     #[serde(default)]
     pub compact_dock: bool,
@@ -109,6 +144,15 @@ pub struct AppSettings {
     /// UI scale percent (90–125).
     #[serde(default = "default_ui_scale")]
     pub ui_scale: u32,
+    /// Native window material behind the main window: "none" | "mica" | "acrylic".
+    #[serde(default = "default_theme_backdrop")]
+    pub theme_backdrop: String,
+    /// Frontend-owned UI preferences blob — stored verbatim, schema lives in the UI.
+    #[serde(default)]
+    pub ui_prefs: Option<serde_json::Value>,
+    /// User's own KLIPY GIF API key. Empty = fall back to the key baked in at build time.
+    #[serde(default)]
+    pub klipy_api_key: String,
 }
 
 fn default_snip_delay_ms() -> u32 {
@@ -133,6 +177,43 @@ fn clamp_max_history(n: u32) -> u32 {
 
 fn clamp_ui_scale(n: u32) -> u32 {
     n.clamp(90, 125)
+}
+
+fn default_theme_backdrop() -> String {
+    "none".into()
+}
+
+const ACCENT_PRESETS: &[&str] = &[
+    "cyan", "blue", "indigo", "purple", "pink", "red", "orange", "yellow", "green",
+];
+
+fn normalize_theme_mode(raw: &str) -> String {
+    match raw {
+        "light" | "system" => raw.to_string(),
+        _ => "dark".to_string(),
+    }
+}
+
+/// Preset accent id, or a custom `#rrggbb` (stored lowercase). Anything else → cyan.
+fn normalize_accent_color(raw: &str) -> String {
+    if ACCENT_PRESETS.contains(&raw) {
+        return raw.to_string();
+    }
+    let is_hex = raw.len() == 7
+        && raw.starts_with('#')
+        && raw[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if is_hex {
+        raw.to_ascii_lowercase()
+    } else {
+        "cyan".to_string()
+    }
+}
+
+fn normalize_theme_backdrop(raw: &str) -> String {
+    match raw {
+        "mica" | "acrylic" => raw.to_string(),
+        _ => default_theme_backdrop(),
+    }
 }
 
 fn default_hotkey_record() -> String {
@@ -216,10 +297,14 @@ impl Default for AppSettings {
             auto_translate_enabled: false,
             auto_translate_target_lang: default_auto_translate_target_lang(),
             auto_eval_math: false,
+            direct_paste_enabled: false,
             compact_dock: false,
             main_always_on_top: false,
             max_history: default_max_history(),
             ui_scale: default_ui_scale(),
+            theme_backdrop: default_theme_backdrop(),
+            ui_prefs: None,
+            klipy_api_key: String::new(),
         }
     }
 }
@@ -323,6 +408,28 @@ impl Database {
                 tokenize = 'porter unicode61'
             );
             ",
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Frecency columns — older vaults predate them, so ignore duplicates.
+        let _ = conn.execute(
+            "ALTER TABLE items ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN last_used_at TEXT", []);
+        // Item metadata — source process and image pixel size (nullable for older rows).
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN source_app TEXT", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN width INTEGER", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN height INTEGER", []);
+        Ok(())
+    }
+
+    /// Bump a clip's frecency after it is pasted so it climbs search results.
+    pub fn record_use(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE items SET use_count = use_count + 1, last_used_at = ?2 WHERE id = ?1",
+            params![id, Utc::now().to_rfc3339()],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
@@ -513,21 +620,24 @@ impl Database {
             .get_setting("launch_at_startup")?
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let theme_mode = match self
-            .get_setting("theme_mode")?
-            .unwrap_or_else(|| "dark".to_string())
-            .as_str()
-        {
-            "light" => "light".to_string(),
-            _ => "dark".to_string(),
-        };
-        let accent_raw = self
-            .get_setting("accent_color")?
-            .unwrap_or_else(|| "cyan".to_string());
-        let accent_color = match accent_raw.as_str() {
-            "purple" | "green" | "orange" => accent_raw,
-            _ => "cyan".to_string(),
-        };
+        let theme_mode = normalize_theme_mode(
+            self.get_setting("theme_mode")?
+                .as_deref()
+                .unwrap_or("dark"),
+        );
+        let accent_color = normalize_accent_color(
+            self.get_setting("accent_color")?
+                .as_deref()
+                .unwrap_or("cyan"),
+        );
+        let theme_backdrop = normalize_theme_backdrop(
+            self.get_setting("theme_backdrop")?
+                .as_deref()
+                .unwrap_or("none"),
+        );
+        let ui_prefs = self
+            .get_setting("ui_prefs")?
+            .and_then(|raw| serde_json::from_str(&raw).ok());
         let theme_use_custom = self
             .get_setting("theme_use_custom")?
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -594,6 +704,10 @@ impl Database {
             .get_setting("auto_eval_math")?
             .map(|v| v == "1")
             .unwrap_or(false);
+        let direct_paste_enabled = self
+            .get_setting("direct_paste_enabled")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
         let compact_dock = self
             .get_setting("compact_dock")?
             .map(|v| v == "1")
@@ -612,6 +726,10 @@ impl Database {
             .and_then(|v| v.parse::<u32>().ok())
             .map(clamp_ui_scale)
             .unwrap_or_else(default_ui_scale);
+        let klipy_api_key = self
+            .get_setting("klipy_api_key")?
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         Ok(AppSettings {
             hotkey_clipboard: self
                 .get_setting("hotkey_clipboard")?
@@ -645,10 +763,14 @@ impl Database {
             auto_translate_enabled,
             auto_translate_target_lang,
             auto_eval_math,
+            direct_paste_enabled,
             compact_dock,
             main_always_on_top,
             max_history,
             ui_scale,
+            theme_backdrop,
+            ui_prefs,
+            klipy_api_key,
         })
     }
 
@@ -672,17 +794,15 @@ impl Database {
             "launch_at_startup",
             if settings.launch_at_startup { "1" } else { "0" },
         )?;
-        let theme = if settings.theme_mode == "light" {
-            "light"
-        } else {
-            "dark"
-        };
-        self.set_setting("theme_mode", theme)?;
-        let accent = match settings.accent_color.as_str() {
-            "purple" | "green" | "orange" => settings.accent_color.as_str(),
-            _ => "cyan",
-        };
-        self.set_setting("accent_color", accent)?;
+        self.set_setting("theme_mode", &normalize_theme_mode(&settings.theme_mode))?;
+        self.set_setting(
+            "accent_color",
+            &normalize_accent_color(&settings.accent_color),
+        )?;
+        self.set_setting(
+            "theme_backdrop",
+            &normalize_theme_backdrop(&settings.theme_backdrop),
+        )?;
         self.set_setting(
             "theme_use_custom",
             if settings.theme_use_custom { "1" } else { "0" },
@@ -763,6 +883,14 @@ impl Database {
             if settings.auto_eval_math { "1" } else { "0" },
         )?;
         self.set_setting(
+            "direct_paste_enabled",
+            if settings.direct_paste_enabled {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.set_setting(
             "compact_dock",
             if settings.compact_dock { "1" } else { "0" },
         )?;
@@ -778,6 +906,13 @@ impl Database {
             "ui_scale",
             &clamp_ui_scale(settings.ui_scale).to_string(),
         )?;
+        if let Some(prefs) = &settings.ui_prefs {
+            let json = serde_json::to_string(prefs).unwrap_or_else(|_| "{}".to_string());
+            self.set_setting("ui_prefs", &json)?;
+        } else {
+            self.set_setting("ui_prefs", "")?;
+        }
+        self.set_setting("klipy_api_key", settings.klipy_api_key.trim())?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }
@@ -866,6 +1001,17 @@ impl Database {
         content: &str,
         preview: &str,
     ) -> Result<ClipboardItem, String> {
+        self.insert_with_meta(content_type, content, preview, &ItemMeta::default())
+    }
+
+    /// Insert with capture metadata (source process, image pixel size).
+    pub fn insert_with_meta(
+        &self,
+        content_type: &str,
+        content: &str,
+        preview: &str,
+        meta: &ItemMeta,
+    ) -> Result<ClipboardItem, String> {
         // Read cap before taking the items lock (get_setting uses the same mutex)
         let max_history = self
             .get_setting("max_history")?
@@ -891,9 +1037,17 @@ impl Database {
         let created_at_str = created_at.to_rfc3339();
 
         conn.execute(
-            "INSERT INTO items (content_type, content, preview, is_pinned, created_at)
-             VALUES (?1, ?2, ?3, 0, ?4)",
-            params![content_type, content, preview, created_at_str],
+            "INSERT INTO items (content_type, content, preview, is_pinned, created_at, source_app, width, height)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7)",
+            params![
+                content_type,
+                content,
+                preview,
+                created_at_str,
+                meta.source_app,
+                meta.width,
+                meta.height
+            ],
         )
         .map_err(|e| e.to_string())?;
 
@@ -925,6 +1079,9 @@ impl Database {
             preview: preview.to_string(),
             is_pinned: false,
             created_at: created_at_str,
+            source_app: meta.source_app.clone(),
+            width: meta.width,
+            height: meta.height,
         })
     }
 
@@ -955,12 +1112,17 @@ impl Database {
         id: i64,
         content: &str,
         preview: &str,
+        width: Option<u32>,
+        height: Option<u32>,
     ) -> Result<ClipboardItem, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        // Crops change the pixel size — keep the stored dimensions in step (None keeps the old value)
         let updated = conn
             .execute(
-                "UPDATE items SET content = ?1, preview = ?2 WHERE id = ?3 AND content_type IN ('image', 'screenshot')",
-                params![content, preview, id],
+                "UPDATE items SET content = ?1, preview = ?2,
+                    width = COALESCE(?4, width), height = COALESCE(?5, height)
+                 WHERE id = ?3 AND content_type IN ('image', 'screenshot')",
+                params![content, preview, id, width, height],
             )
             .map_err(|e| e.to_string())?;
         if updated == 0 {
@@ -981,7 +1143,7 @@ impl Database {
         let mut sql = String::from(
             "SELECT id, content_type,
                 CASE WHEN content_type IN ('image', 'screenshot') THEN '' ELSE content END,
-                preview, is_pinned, created_at
+                preview, is_pinned, created_at, source_app, width, height
              FROM items WHERE 1=1",
         );
         let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -1034,16 +1196,7 @@ impl Database {
             binds.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                Ok(ClipboardItem {
-                    id: row.get(0)?,
-                    content_type: row.get(1)?,
-                    content: row.get(2)?,
-                    preview: row.get(3)?,
-                    is_pinned: row.get::<_, i64>(4)? != 0,
-                    created_at: row.get(5)?,
-                })
-            })
+            .query_map(params_refs.as_slice(), item_from_row)
             .map_err(|e| e.to_string())?;
 
         let mut items = Vec::new();
@@ -1054,11 +1207,11 @@ impl Database {
     }
 
     // wiring up the sqlite search command to filter history in real-time as the user types
-    pub fn search_clipboard(&self, query: &str) -> Result<Vec<ClipboardItem>, String> {
+    pub fn search_clipboard(&self, query: &str, limit: i64) -> Result<Vec<ClipboardItem>, String> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             // Win+V-style panel shows a short recent stack (pins float first via list ORDER BY)
-            return self.list(None, None, 25);
+            return self.list(None, None, limit);
         }
 
         if let Some(match_q) = Self::fts_match_query(trimmed) {
@@ -1067,25 +1220,18 @@ impl Database {
                 .prepare(
                     "SELECT i.id, i.content_type,
                         CASE WHEN i.content_type IN ('image', 'screenshot') THEN '' ELSE i.content END,
-                        i.preview, i.is_pinned, i.created_at
+                        i.preview, i.is_pinned, i.created_at, i.source_app, i.width, i.height
                      FROM items_fts f
                      JOIN items i ON i.id = f.rowid
                      WHERE f MATCH ?1
-                     ORDER BY i.is_pinned DESC, i.created_at DESC
-                     LIMIT 25",
+                     ORDER BY i.is_pinned DESC,
+                              min(i.use_count, 5) DESC,
+                              COALESCE(i.last_used_at, i.created_at) DESC
+                     LIMIT ?2",
                 )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map(params![match_q], |row| {
-                    Ok(ClipboardItem {
-                        id: row.get(0)?,
-                        content_type: row.get(1)?,
-                        content: row.get(2)?,
-                        preview: row.get(3)?,
-                        is_pinned: row.get::<_, i64>(4)? != 0,
-                        created_at: row.get(5)?,
-                    })
-                })
+                .query_map(params![match_q, limit], item_from_row)
                 .map_err(|e| e.to_string())?;
             let mut items = Vec::new();
             for row in rows {
@@ -1097,7 +1243,7 @@ impl Database {
         }
 
         // Fallback for punctuation-only queries or empty FTS hits
-        self.list(None, Some(trimmed), 25)
+        self.list(None, Some(trimmed), limit)
     }
 
     /// Per-category counts for the sidebar — one row per visible tab.
@@ -1158,18 +1304,10 @@ impl Database {
     pub fn get(&self, id: i64) -> Result<Option<ClipboardItem>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT id, content_type, content, preview, is_pinned, created_at FROM items WHERE id = ?1",
+            "SELECT id, content_type, content, preview, is_pinned, created_at, source_app, width, height
+             FROM items WHERE id = ?1",
             params![id],
-            |row| {
-                Ok(ClipboardItem {
-                    id: row.get(0)?,
-                    content_type: row.get(1)?,
-                    content: row.get(2)?,
-                    preview: row.get(3)?,
-                    is_pinned: row.get::<_, i64>(4)? != 0,
-                    created_at: row.get(5)?,
-                })
-            },
+            item_from_row,
         )
         .optional()
         .map_err(|e| e.to_string())

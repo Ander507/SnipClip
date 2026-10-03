@@ -4,6 +4,66 @@ All notable changes to SnipClip are documented here.
 
 ## [Unreleased]
 
+### Paste engine
+
+- **Direct auto-paste:** **Off by default** (Settings → Clipboard extras). When enabled, Enter in the floating clipboard popup (or compact dock) hides SnipClip, restores the previous app, and synthesizes Ctrl+V. **Shift+Enter** types Unicode keystrokes for fields that block paste. **Ctrl+Enter** copies without pasting.
+- Tracks the last non-SnipClip foreground window so paste works from the vault too.
+- **Transform on paste:** 21 transforms (format/minify JSON, base64, URL encode/decode, case conversions, slug, dedupe/sort lines, strip HTML, unindent) applied on the way out. `Tab` cycles, the bar leads with content-aware hits, and the result previews before you commit.
+- **Multi-clip paste:** `Ctrl+Space` picks several clips. Enter merges them into one paste; **Shift+Enter** walks form fields, tapping `Tab` between each.
+- **Alt+1…9** fires the Nth clip straight into the app you came from.
+- **Frecency ranking:** clips you actually paste climb search results (`use_count` + `last_used_at`, bounded so one clip can't pin itself to the top forever).
+
+### Clipboard popup (Alt+C) — emoji, GIFs, kaomoji, symbols
+
+- **Win+V-style tabs:** Clipboard, Emoji, GIFs, Kaomoji and Symbols, each with search, category shortcuts and a "Recently used" row. `Ctrl+Tab` switches tabs; arrow keys move through the grids.
+- **Emoji:** full catalogue (emojibase, up to Emoji 15 so nothing renders as a box on Windows) with keyword search ("lol" finds 😂) and a remembered skin tone.
+- **GIFs via KLIPY:** trending, search, quick-search chips and infinite scroll. Enter pastes the GIF as a real `.gif` file (Discord, Slack and Teams upload it), Shift+Enter copies the link, Ctrl+Enter copies only. Needs a free KLIPY key in Settings → Clipboard popup, or one baked in at build time via the `KLIPY_API_KEY` environment variable. "Powered by KLIPY" is shown in the tab.
+- **Inserting:** with Direct paste on, Enter pastes emoji / kaomoji / symbols into the previous app and leaves them on your clipboard; Shift+Enter types them out without touching the clipboard; Ctrl+Enter only copies.
+- **Draggable:** drag the popup by its header; the spot is remembered per position setting. Double-click the header to snap back.
+- **No more duplicate rows** when pasting or copying an older clip — SnipClip ignores its own clipboard writes.
+- Category rows scroll sideways with the mouse wheel and no longer show a thick scrollbar.
+
+### Cleanup
+
+- Removed four unused Rust functions (old hotkey bootstrap, `is_recording`, a region-capture wrapper, an unused password check); the Wayland-only PNG helper is now only compiled where it's used. `cargo build` is warning-free for SnipClip's own code.
+
+### Theme
+
+- **Saved theme loads at launch:** the vault no longer sits on default dark/cyan until Settings is opened. The last theme paints instantly from a local cache, startup settings reads retry until the backend is ready, and the window background matches the theme (no grey flash).
+- **Every window follows the theme:** the clipboard popup, snipper, recorder bar, screenshot popup and video editor update live on save (`settings-changed`), and the popup, recorder bar and screenshot popup drop their hard-coded dark colors.
+- **Vault unlock** reloads the real theme instead of keeping the locked placeholder's defaults.
+- **Accent and Dark/Light work with Custom theme on:** accent swatches update the custom accent; switching mode rebases custom surfaces onto the new mode and keeps the accent.
+- **Unsaved previews don't stick:** leaving Settings without saving restores the saved theme, Back asks before discarding changes, and toggling a library tab saves only the tab change.
+
+### Customization
+
+- **Theme gallery:** SnipClip Dark/Light, OLED Black, Nord, Dracula, Catppuccin Mocha, Rosé Pine, Windows Light and Solarized Light, with live mini previews.
+- **Any accent color:** nine presets plus a custom color picker; text on the accent picks black or white automatically for contrast.
+- **System theme:** follows Windows light/dark live, including the window background.
+- **Mica / Acrylic window material** (Windows 11; Acrylic on Windows 10 1809+) behind translucent panels. Falls back to solid on older builds.
+- **Layout & text:** UI and code fonts (presets or any installed font), density (compact / comfortable / spacious), corner roundness, border strength, sidebar left/right, icon-only sidebar, and a thumbnail grid for the Images / Screenshots tabs.
+- **Clipboard popup options:** open bottom-right, bottom-center, centered or next to the mouse (on the monitor under the cursor), plus width, number of clips and image previews on/off.
+- **Per-tab icons and colors** for the library sidebar.
+
+### Vault UI
+
+- **Day groups and relative times:** Pinned / Today / Yesterday / weekday headers, and "5m ago"-style timestamps.
+- **Richer rows:** multi-line text previews, the app a clip came from, character counts, image dimensions and sharp thumbnails (new `item_thumbnail` backend command; the stored 64 px preview was being stretched).
+- **Flatter cards:** accent bar for the selected row instead of a full fill, and code blocks without the nested header box.
+- **Keyboard-friendly:** row actions stay visible on the selected row; single click selects, double-click or **Space** previews images and opens recordings.
+- **Settings:** section rail with live highlighting, toggle switches, an "Unsaved changes" indicator, **Ctrl+S** to save, and confirmations for Defaults (vault password is kept).
+- **Toasts:** success / error icons, and **Undo** after deleting a clip (the delete waits 5 seconds).
+- **Clear history** moved from the sidebar to Settings → Storage with a click-again confirmation; the popup's "Clear all" also asks twice.
+
+### Fixes
+
+- OCR "Copy text" button never appeared on image rows.
+- Uneven gaps between vault rows (double-counted spacing and a measurement reset on every refresh).
+- Popup image cards were blurry.
+- Hotkeys showed Mac symbols (⌃⇧V) on Windows — now `Ctrl+Shift+V`.
+- "Reset colors to preset" no longer wipes glass, translucency and the wallpaper.
+- Edited screenshots keep their stored size up to date.
+
 ## [1.6.1] — 2026-09-14
 
 ### Cleanup

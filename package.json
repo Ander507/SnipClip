@@ -24,6 +24,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
+    "emojibase-data": "^17.0.0",
     "lucide-react": "^1.29.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

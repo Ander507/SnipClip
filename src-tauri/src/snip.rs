@@ -224,18 +224,8 @@ fn capture_region_rgba_xcap(x: i32, y: i32, width: u32, height: u32) -> Result<R
     Ok(canvas)
 }
 
-/// Capture a screen region using physical pixel coordinates (absolute desktop space).
-/// Supports selections that span multiple monitors by stitching monitor captures.
-pub fn capture_screen_region(
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-) -> Result<CaptureResult, String> {
-    capture_screen_region_ex(x, y, width, height, None, false)
-}
-
-/// Like [`capture_screen_region`], optionally treating `(x, y)` as overlay-local.
+/// Capture a screen region using physical pixel coordinates (absolute desktop space), or
+/// overlay-local ones when `origin` is given. Selections spanning monitors are stitched.
 pub fn capture_screen_region_ex(
     x: i32,
     y: i32,
@@ -302,6 +292,7 @@ pub fn save_png_data_url(data_url: &str, path: &str) -> Result<(), String> {
 }
 
 /// Build a `CaptureResult` from raw PNG bytes (grim stdout on Wayland).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn capture_result_from_png_bytes(
     png_bytes: &[u8],
     monitor_name: &str,

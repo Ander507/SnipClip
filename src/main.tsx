@@ -1,6 +1,7 @@
 import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
+import { applyCachedTheme } from "./lib/themeSync";
 
 // Every Tauri window loads this same entry, so static imports made the snip overlay and the
 // recorder bar parse the entire main app before they could draw. Splitting per window means
@@ -56,6 +57,9 @@ if (isVideoEditorView) {
   document.documentElement.classList.add("video-editor-mode");
   document.body.classList.add("video-editor-mode");
 }
+
+// Paint the last saved theme before React mounts; each window confirms it once IPC answers.
+applyCachedTheme({ effects: !(isPopupView || isRecorderView || isPaletteView) });
 
 // Disable the WebView / Edge right-click menu in the desktop shell
 document.addEventListener("contextmenu", (e) => e.preventDefault());

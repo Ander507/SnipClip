@@ -1,4 +1,4 @@
-use crate::db::Database;
+use crate::db::{Database, ItemMeta};
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use image::{imageops, ImageBuffer, Rgba};
@@ -110,7 +110,7 @@ fn process_is_ignored(process: &str, list: &[String]) -> bool {
 }
 
 /// Skip vault insert when paused, or when the clipboard owner is on the ignore list.
-fn should_skip_insert() -> bool {
+fn should_skip_insert(source_app: Option<&str>) -> bool {
     if is_paused() {
         return true;
     }
@@ -118,8 +118,8 @@ fn should_skip_insert() -> bool {
     if list.is_empty() {
         return false;
     }
-    match clipboard_source_process() {
-        Some(name) if process_is_ignored(&name, &list) => true,
+    match source_app {
+        Some(name) if process_is_ignored(name, &list) => true,
         _ => false,
     }
 }
@@ -250,7 +250,7 @@ fn read_clipboard_snapshot() -> Result<(Option<String>, Option<ImageData<'static
     })
 }
 
-fn insert_classified_text(app: &AppHandle, db: &Arc<Database>, text: &str) {
+fn insert_classified_text(app: &AppHandle, db: &Arc<Database>, text: &str, meta: &ItemMeta) {
     let (ctype, preview) = classify_text(text);
     if ctype == "text" {
         if let Some(tr) = crate::translate::try_translate(text) {
@@ -265,7 +265,7 @@ fn insert_classified_text(app: &AppHandle, db: &Arc<Database>, text: &str) {
                 tr.translated.trim(),
                 text.trim()
             );
-            if let Ok(item) = db.insert("translated", &content, &tr_preview) {
+            if let Ok(item) = db.insert_with_meta("translated", &content, &tr_preview, meta) {
                 let _ = app.emit("clipboard-item", &item.for_event());
                 let _ = app.emit(
                     "auto-translated",
@@ -274,13 +274,13 @@ fn insert_classified_text(app: &AppHandle, db: &Arc<Database>, text: &str) {
                         "preview": tr.translated.chars().take(80).collect::<String>(),
                     }),
                 );
-            } else if let Ok(item) = db.insert(ctype, text, &preview) {
+            } else if let Ok(item) = db.insert_with_meta(ctype, text, &preview, meta) {
                 let _ = app.emit("clipboard-item", &item.for_event());
             }
-        } else if let Ok(item) = db.insert(ctype, text, &preview) {
+        } else if let Ok(item) = db.insert_with_meta(ctype, text, &preview, meta) {
             let _ = app.emit("clipboard-item", &item.for_event());
         }
-    } else if let Ok(item) = db.insert(ctype, text, &preview) {
+    } else if let Ok(item) = db.insert_with_meta(ctype, text, &preview, meta) {
         let _ = app.emit("clipboard-item", &item.for_event());
     }
 }
@@ -290,10 +290,17 @@ fn process_clipboard_snapshot(
     db: &Arc<Database>,
     text: Option<String>,
     image: Option<ImageData<'static>>,
+    source_app: Option<String>,
     last_text: &mut Option<String>,
     last_image_hash: &mut Option<u64>,
     skip_insert: bool,
 ) {
+    // Shared by every insert below; images add their pixel size on top
+    let meta = ItemMeta {
+        source_app,
+        ..Default::default()
+    };
+
     if let Some(text) = text {
         if Some(&text) != last_text.as_ref() {
             *last_text = Some(text.clone());
@@ -303,7 +310,7 @@ fn process_clipboard_snapshot(
                     if let Some((expr, result)) = crate::math::try_solve(&text) {
                         let content = text.trim().to_string();
                         let preview = format!("= {result}");
-                        if let Ok(item) = db.insert("math", &content, &preview) {
+                        if let Ok(item) = db.insert_with_meta("math", &content, &preview, &meta) {
                             let _ = app.emit("clipboard-item", &item.for_event());
                             let _ = app.emit(
                                 "math-solved",
@@ -312,10 +319,10 @@ fn process_clipboard_snapshot(
                         }
                         // Fall through? No — math handled; skip normal insert
                     } else {
-                        insert_classified_text(app, db, &text);
+                        insert_classified_text(app, db, &text, &meta);
                     }
                 } else {
-                    insert_classified_text(app, db, &text);
+                    insert_classified_text(app, db, &text, &meta);
                 }
             }
         }
@@ -328,7 +335,12 @@ fn process_clipboard_snapshot(
             if !skip_insert {
                 if let Ok((b64, thumb)) = image_to_png_b64(&img) {
                     let content = format!("data:image/png;base64,{b64}");
-                    if let Ok(item) = db.insert("image", &content, &thumb) {
+                    let image_meta = ItemMeta {
+                        width: u32::try_from(img.width).ok(),
+                        height: u32::try_from(img.height).ok(),
+                        ..meta.clone()
+                    };
+                    if let Ok(item) = db.insert_with_meta("image", &content, &thumb, &image_meta) {
                         let _ = app.emit("clipboard-item", &item.for_event());
                     }
                 }
@@ -348,7 +360,7 @@ mod clipboard_seq {
         fn GetClipboardSequenceNumber() -> u32;
     }
 
-    fn current() -> u32 {
+    pub fn current() -> u32 {
         unsafe { GetClipboardSequenceNumber() }
     }
 
@@ -370,11 +382,27 @@ mod clipboard_seq {
 
 #[cfg(not(windows))]
 mod clipboard_seq {
+    pub fn current() -> u32 {
+        0
+    }
+
     pub fn changed() -> bool {
         true
     }
 
     pub fn acknowledge_current() {}
+}
+
+/// Run a SnipClip-originated clipboard write and mark its result as already seen.
+/// The time-based suppression alone leaks: with the UI hidden the monitor sleeps 1.5 s,
+/// outlasting the window, and would then vault our own write (e.g. a pasted GIF's path).
+pub fn ignore_own_writes<T>(write: impl FnOnce() -> T) -> T {
+    let before = clipboard_seq::current();
+    let out = write();
+    if clipboard_seq::current() != before {
+        clipboard_seq::acknowledge_current();
+    }
+    out
 }
 
 pub fn start_monitor(app: AppHandle) {
@@ -438,12 +466,15 @@ pub fn start_monitor(app: AppHandle) {
                 continue;
             };
 
-            let skip_insert = should_skip_insert();
+            // One owner lookup per snapshot — feeds the ignore list and the stored source app
+            let source_app = clipboard_source_process();
+            let skip_insert = should_skip_insert(source_app.as_deref());
             process_clipboard_snapshot(
                 &app,
                 &db,
                 text,
                 image,
+                source_app,
                 &mut last_text,
                 &mut last_image_hash,
                 skip_insert || is_paused(),

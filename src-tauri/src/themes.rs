@@ -251,3 +251,140 @@ pub fn write_text_file(path: &str, contents: &str) -> Result<(), String> {
 pub fn read_text_file(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| e.to_string())
 }
+/// Paint the opaque windows with the theme's app colour so the native background matches
+/// the webview — no grey #202020 flash for light / custom themes, and glass panels sit on
+/// the right colour instead of the config default. Also applies the main window's
+/// Mica / Acrylic backdrop (Windows only); re-run on OS theme changes so "system" follows live.
+pub fn sync_window_backgrounds(app: &AppHandle, settings: &crate::db::AppSettings) {
+    let main = app.get_webview_window("main");
+    let light = match settings.theme_mode.as_str() {
+        "light" => true,
+        // Follow Windows — the main window reports the OS app theme
+        "system" => main
+            .as_ref()
+            .and_then(|w| w.theme().ok())
+            .is_some_and(|t| t == tauri::Theme::Light),
+        _ => false,
+    };
+    let preset = if light { "#f3f3f3" } else { "#202020" };
+    let custom = if settings.theme_use_custom {
+        settings
+            .theme_custom
+            .as_ref()
+            .and_then(|c| c.get("app"))
+            .and_then(|v| v.as_str())
+    } else {
+        None
+    };
+    let Some((r, g, b)) = custom.and_then(parse_hex_rgb).or_else(|| parse_hex_rgb(preset)) else {
+        return;
+    };
+    let opaque = tauri::window::Color(r, g, b, 255);
+
+    if let Some(win) = main {
+        let backdrop = apply_backdrop(&win, &settings.theme_backdrop, light, (r, g, b));
+        // Fully transparent background lets the material show through the webview
+        let bg = if backdrop {
+            tauri::window::Color(0, 0, 0, 0)
+        } else {
+            opaque
+        };
+        let _ = win.set_background_color(Some(bg));
+    }
+    if let Some(win) = app.get_webview_window("video_editor") {
+        let _ = win.set_background_color(Some(opaque));
+    }
+}
+
+/// Set (or clear) the native window material. Returns true when a backdrop is active.
+#[cfg(windows)]
+fn apply_backdrop(
+    win: &tauri::WebviewWindow,
+    backdrop: &str,
+    light: bool,
+    (r, g, b): (u8, u8, u8),
+) -> bool {
+    use tauri::window::{Color, Effect, EffectsBuilder};
+
+    // Tauri swallows unsupported-OS errors from set_effects, so gate on the build ourselves —
+    // otherwise a transparent background with no material leaves the window see-through.
+    let build = windows_build();
+    let effects = match backdrop {
+        "mica" if build >= 22000 => Some(
+            EffectsBuilder::new()
+                .effect(if light { Effect::MicaLight } else { Effect::MicaDark })
+                .build(),
+        ),
+        // Tint the blur with the app colour so text contrast holds over busy wallpapers
+        "acrylic" if build >= 17763 => Some(
+            EffectsBuilder::new()
+                .effect(Effect::Acrylic)
+                .color(Color(r, g, b, 0x99))
+                .build(),
+        ),
+        _ => None,
+    };
+    let wanted = effects.is_some();
+    win.set_effects(effects).is_ok() && wanted
+}
+
+/// Windows build number (22000+ = Windows 11), or 0 if it cannot be read.
+#[cfg(windows)]
+fn windows_build() -> u32 {
+    #[repr(C)]
+    #[allow(dead_code)] // layout mirrors OSVERSIONINFOW; only `build` is read
+    struct OsVersionInfoW {
+        size: u32,
+        major: u32,
+        minor: u32,
+        build: u32,
+        platform: u32,
+        csd_version: [u16; 128],
+    }
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn RtlGetVersion(info: *mut OsVersionInfoW) -> i32;
+    }
+    let mut info = OsVersionInfoW {
+        size: std::mem::size_of::<OsVersionInfoW>() as u32,
+        major: 0,
+        minor: 0,
+        build: 0,
+        platform: 0,
+        csd_version: [0; 128],
+    };
+    // SAFETY: RtlGetVersion fills a caller-owned OSVERSIONINFOW whose size field is set.
+    // Unlike GetVersionEx it is not subject to manifest-based version lies.
+    if unsafe { RtlGetVersion(&mut info) } == 0 {
+        info.build
+    } else {
+        0
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_backdrop(
+    _win: &tauri::WebviewWindow,
+    _backdrop: &str,
+    _light: bool,
+    _rgb: (u8, u8, u8),
+) -> bool {
+    false
+}
+
+fn parse_hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let raw = hex.trim().trim_start_matches('#');
+    if !raw.is_ascii() {
+        return None;
+    }
+    let channel = |s: &str| u8::from_str_radix(s, 16).ok();
+    match raw.len() {
+        3 => Some((
+            channel(&raw[0..1].repeat(2))?,
+            channel(&raw[1..2].repeat(2))?,
+            channel(&raw[2..3].repeat(2))?,
+        )),
+        6 | 8 => Some((channel(&raw[0..2])?, channel(&raw[2..4])?, channel(&raw[4..6])?)),
+        _ => None,
+    }
+}
