@@ -23,6 +23,10 @@ All notable changes to SnipClip are documented here.
 - **No more duplicate rows** when pasting or copying an older clip — SnipClip ignores its own clipboard writes.
 - Category rows scroll sideways with the mouse wheel and no longer show a thick scrollbar.
 
+### Platforms
+
+- **Linux builds paused:** releases are Windows-only for now. The release workflow no longer builds AppImage / `.deb`, and the README says so. Cross-platform code paths stay in the source for later.
+
 ### Cleanup
 
 - Removed four unused Rust functions (old hotkey bootstrap, `is_recording`, a region-capture wrapper, an unused password check); the Wayland-only PNG helper is now only compiled where it's used. `cargo build` is warning-free for SnipClip's own code.

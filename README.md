@@ -19,7 +19,7 @@ A tray app for clipboard history, screenshots, screen recording, OCR, and in-app
 <p align="center">
   <strong><a href="https://github.com/Ander507/SnipClip/releases/latest">Try the latest release</a></strong> (always <code>/releases/latest</code> — not an old v1 tag)<br/>
   Windows: prefer <strong>MSI</strong> or <strong>portable zip</strong> if SmartScreen nags · NSIS <code>.exe</code> also available<br/>
-  Linux: <code>.AppImage</code> · <code>.deb</code> (vault + hotkeys; capture is Windows-first)
+  Windows only for now — Linux builds are paused
 </p>
 
 > **Reviewers:** grab [Releases → Latest](https://github.com/Ander507/SnipClip/releases/latest). Use the **`.msi`** or **portable `.zip`** if Defender/SmartScreen blocks the NSIS setup. Release notes include VirusTotal + SHA-256.
@@ -202,8 +202,8 @@ Published by [`.github/workflows/release.yml`](./.github/workflows/release.yml) 
 | Platform | Artifacts |
 |---|---|
 | **Windows** | **`.msi` (WiX)** · **portable `.zip`** · NSIS `.exe` · updater `latest.json` |
-| **Linux** | **`.AppImage`** and **`.deb`** |
-| **macOS** | Build from source today (no prebuilt `.dmg` in CI yet) |
+| **Linux** | Paused for now — no prebuilt builds |
+| **macOS** | Not supported yet |
 
 If Windows Defender / SmartScreen nags on the NSIS `.exe`, use the **`.msi`** or unzip the **portable** build instead. Installers are unsigned community builds (no UPX / packers). See the latest [GitHub Release](https://github.com/Ander507/SnipClip/releases/latest) for VirusTotal + SHA-256.
 
@@ -215,8 +215,7 @@ Requirements:
 
 - [Node.js 20+](https://nodejs.org/)
 - Stable [Rust](https://rustup.rs/)
-- [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS
-- On Wayland Linux: `grim`, `slurp`, and `wl-clipboard`
+- [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for Windows
 
 ```bash
 git clone https://github.com/Ander507/SnipClip.git && cd SnipClip
@@ -228,7 +227,7 @@ Production build: `npm run tauri build`
 
 No environment variables or external database. FFmpeg is resolved/bundled via `ffmpeg-sidecar` for recording. The vault lives in your OS app-data directory.
 
-**Platform notes:** Windows has the full feature set (desktop-audio recording, OCR, GDI capture, multi-monitor overlays). Linux AppImage/deb builds run the **vault + hotkeys**; snip/record/OCR/WASAPI are Windows-first. Wayland capture needs extra tools (`grim`, `slurp`, `wl-clipboard`) and is not the High Seas review path — use a Windows VM or the portable zip for demos.
+**Platform notes:** SnipClip is Windows-only for now (desktop-audio recording, OCR, GDI capture, multi-monitor overlays, direct paste). Linux builds are paused; the cross-platform code paths are still in the source for when they come back.
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history.
 

@@ -121,25 +121,7 @@ pub(crate) fn ffmpeg_binary() -> Result<PathBuf, String> {
     static READY: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
     READY
         .get_or_init(|| {
-            // Linux/macOS: use the distro's ffmpeg when installed (the .deb depends on it) —
-            // the sidecar download is only a fallback there.
-            #[cfg(not(windows))]
-            if Command::new("ffmpeg")
-                .arg("-version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-            {
-                return Ok(PathBuf::from("ffmpeg"));
-            }
-            ffmpeg_sidecar::download::auto_download().map_err(|e| {
-                if cfg!(windows) {
-                    e.to_string()
-                } else {
-                    format!("{e} — install ffmpeg with your package manager (e.g. sudo apt install ffmpeg)")
-                }
-            })?;
+            ffmpeg_sidecar::download::auto_download().map_err(|e| e.to_string())?;
             Ok(ffmpeg_sidecar::paths::ffmpeg_path())
         })
         .clone()

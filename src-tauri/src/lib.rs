@@ -33,30 +33,7 @@ use tauri::{
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// WebKitGTK's DMA-BUF renderer leaves a blank window on many Linux GPU setups (NVIDIA, VMs,
-/// WSL) — opt out unless the user already chose. Inside WSL, GPU GL usually isn't available at all.
-#[cfg(target_os = "linux")]
-fn linux_webview_workarounds() {
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
-    let in_wsl = std::env::var_os("WSL_DISTRO_NAME").is_some()
-        || std::fs::read_to_string("/proc/version")
-            .is_ok_and(|v| v.to_ascii_lowercase().contains("microsoft"));
-    if in_wsl && std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none() {
-        std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
-    }
-    // WSLg has no GPU path for WebKit's accelerated compositing — the window stays blank
-    if in_wsl && std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-    }
-}
-
 pub fn run() {
-    // Must happen before GTK / WebKit initialise
-    #[cfg(target_os = "linux")]
-    linux_webview_workarounds();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())

@@ -15,29 +15,10 @@ jobs:
         include:
           - platform: windows-latest
             args: "--bundles msi,nsis"
-          - platform: ubuntu-22.04
-            args: "--bundles appimage,deb"
 
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libx11-dev \
-            libxrandr-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libdbus-1-dev
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -84,7 +65,7 @@ jobs:
             2. **Portable `.zip`** — unzip and run `SnipClip.exe` (no installer)
             3. **NSIS `.exe`** — classic setup; fine for most people
 
-            Linux: `.AppImage` or `.deb`. WebView2 is required on Windows (already on most Win10/11 PCs).
+            Windows only for now. WebView2 is required (already on most Win10/11 PCs).
 
             ### Antivirus & SmartScreen notice
 
