@@ -46,6 +46,10 @@ fn linux_webview_workarounds() {
     if in_wsl && std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none() {
         std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
     }
+    // WSLg has no GPU path for WebKit's accelerated compositing — the window stays blank
+    if in_wsl && std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
 }
 
 pub fn run() {
@@ -201,6 +205,22 @@ pub fn run() {
                 }
             };
             app.manage(database.clone());
+
+            // The vault window is built here instead of from config: it then only exists once the
+            // DB is managed (its first IPC can't race setup), and transparency — needed for
+            // Mica / Acrylic — stays Windows-only. WebKitGTK can draw a blank transparent window.
+            if let Some(mut main_config) = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .cloned()
+            {
+                main_config.transparent = cfg!(windows);
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &main_config)?.build()?;
+            }
+
             if at_rest_locked {
                 let _ = app.emit(
                     "vault-lock-changed",
