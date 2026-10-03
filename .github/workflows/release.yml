@@ -53,7 +53,10 @@ jobs:
 
             ### Highlights
 
-            - Small cleanup on hotkey registration — clearer conflict messages, same Win+V popup / snip fixes from 1.6.0.
+            - **Alt+C popup grows tabs:** Clipboard, Emoji, GIFs (KLIPY), Kaomoji and Symbols — searchable, with recents, and the popup is now draggable.
+            - **Your theme loads at launch** and every window follows it; new theme gallery, any accent color, System mode and Mica/Acrylic.
+            - **More customization:** fonts, density, corners, borders, sidebar side / icon-only, image grid, per-tab icons and colors, popup position and size.
+            - **Friendlier vault:** day headers, source app, sharp thumbnails, Undo on delete, Space to preview, and direct paste into the app you came from (opt-in).
 
             **Quick try:** install → copy something → `Ctrl+Shift+D` (or `Alt+C`) → Enter to paste → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
 

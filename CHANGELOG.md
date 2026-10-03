@@ -2,7 +2,7 @@
 
 All notable changes to SnipClip are documented here.
 
-## [Unreleased]
+## [1.7.0] — 2026-10-03
 
 ### Paste engine
 
