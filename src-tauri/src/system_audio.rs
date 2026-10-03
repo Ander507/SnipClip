@@ -1,7 +1,13 @@
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+#[cfg(windows)]
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+#[cfg(windows)]
+use std::thread;
+use std::thread::JoinHandle;
 
 pub struct SystemAudioCapture {
     join: JoinHandle<Result<PathBuf, String>>,

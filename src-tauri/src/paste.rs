@@ -9,12 +9,16 @@ use crate::db::ClipboardItem;
 use crate::transform::{self, TransformKind};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+#[cfg(windows)]
+use tauri::Emitter;
+use tauri::{AppHandle, Manager};
 
+#[cfg(windows)]
 static LAST_TARGET: AtomicIsize = AtomicIsize::new(0);
 static TRACKER_STARTED: OnceLock<()> = OnceLock::new();
 static LAST_TITLE: OnceLock<Mutex<String>> = OnceLock::new();
@@ -163,6 +167,7 @@ impl Payload<'_> {
         }
     }
 
+    #[cfg(windows)]
     fn as_text(&self) -> Option<&str> {
         match self {
             Payload::Item(item) if item_is_textual(item) => Some(clipboard_text_for_item(item)),
