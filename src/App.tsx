@@ -98,12 +98,15 @@ function App() {
   // Set when a fetch fails before the backend is ready, so the settings load can retry it.
   const loadFailedRef = useRef(false);
 
+  // Bumped per refresh so a slow older listItems() can't overwrite newer results.
+  const refreshSeqRef = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeqRef.current;
     try {
       const pendingId = pendingDeleteRef.current?.id;
-      const data = ((await listItems(category, debouncedQuery)) ?? []).filter(
-        (i) => i.id !== pendingId
-      );
+      const raw = await listItems(category, debouncedQuery);
+      if (seq !== refreshSeqRef.current) return;
+      const data = (raw ?? []).filter((i) => i.id !== pendingId);
       setItems(Array.isArray(data) ? data : []);
       setSelectedId((prev) => {
         if (prev && data.some((i) => i.id === prev)) return prev;
@@ -112,6 +115,7 @@ function App() {
     } catch (err) {
       console.error(err);
       loadFailedRef.current = true;
+      if (seq !== refreshSeqRef.current) return;
       setItems([]);
       setSelectedId(null);
     }
@@ -206,6 +210,9 @@ function App() {
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
+    // listen() resolves async: if cleanup already ran (StrictMode / re-subscribe), unlisten at once.
+    let disposed = false;
+    const keep = (u: () => void) => (disposed ? u() : void unsubs.push(u));
 
     void listen<ClipboardItem>("clipboard-item", (event) => {
       const item = event.payload;
@@ -221,24 +228,24 @@ function App() {
         return [item, ...base.filter((i) => i.id !== item.id)].slice(0, 500);
       });
       setSelectedId(item.id);
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     // The popup's GIF tab links here when no KLIPY key is set
     void listen<{ section?: string }>("open-settings", (event) => {
       setSettingsSection(event.payload?.section ?? null);
       setView("settings");
       void showMainWindow();
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen("focus-search", () => {
       setView("vault");
       searchRef.current?.focus();
       searchRef.current?.select();
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<boolean>("clipboard-paused", (event) => {
       setClipboardPaused(Boolean(event.payload));
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<{ lineCount?: number; preview?: string; charCount?: number }>("ocr-extracted", (event) => {
       const lines = event.payload?.lineCount ?? 0;
@@ -257,7 +264,7 @@ function App() {
       } else {
         setStatus("OCR text copied", 2000, { tone: "success" });
       }
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<{ targetLang?: string; preview?: string }>("auto-translated", (event) => {
       const lang = (event.payload?.targetLang ?? "en").toUpperCase();
@@ -267,7 +274,7 @@ function App() {
         2800
       );
       void refreshCounts();
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<{ expression?: string; result?: string }>("math-solved", (event) => {
       const expr = event.payload?.expression?.trim();
@@ -276,17 +283,17 @@ function App() {
         setStatus(`Math: ${expr} → ${result} (clipboard unchanged)`, 2400);
       }
       void refreshCounts();
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<{ message?: string }>("hotkey-conflict", (event) => {
       const msg = event.payload?.message?.trim() || "A hotkey is already taken by another app";
       setStatus(`Hotkey conflict: ${msg}`, 6000, { tone: "error" });
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<{ path?: string }>("vault-imported", (event) => {
       const p = event.payload?.path ? ` from ${event.payload.path}` : "";
       setStatus(`Vault staged for restore${p}. Restart SnipClip to apply.`, 6000);
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<{ locked?: boolean }>("vault-lock-changed", (event) => {
       const locked = Boolean(event.payload?.locked);
@@ -295,12 +302,12 @@ function App() {
       setVaultError(null);
       if (!locked) {
         setVaultUnlocking(false);
-        void refresh();
+        void refreshRef.current();
         void refreshCounts();
         // Launch read the locked placeholder's default settings — load the real theme now.
         void fetchSettingsWithRetry().then(applyLoadedSettings).catch(console.error);
       }
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
     void listen<ScreenshotEditorRequest>("open-screenshot-editor", (event) => {
       const payload = event.payload;
@@ -332,10 +339,13 @@ function App() {
           setStatus(String(err), 2400, { tone: "error" });
         }
       })();
-    }).then((u) => unsubs.push(u));
+    }).then(keep);
 
-    return () => unsubs.forEach((u) => u());
-  }, [refresh, refreshCounts, applyLoadedSettings]);
+    return () => {
+      disposed = true;
+      unsubs.forEach((u) => u());
+    };
+  }, [refreshCounts, applyLoadedSettings]);
 
   async function handleExtractText(id: number) {
     try {
@@ -491,12 +501,14 @@ function App() {
   toggleDockRef.current = handleToggleCompact;
 
   useEffect(() => {
+    let disposed = false;
     let unlistenDock: (() => void) | undefined;
     let unlistenPrune: (() => void) | undefined;
     void listen("toggle-compact-dock", () => {
       void toggleDockRef.current();
     }).then((u) => {
-      unlistenDock = u;
+      if (disposed) u();
+      else unlistenDock = u;
     });
     void listen<{ removed?: number; maxHistory?: number }>("history-pruned", (event) => {
       const n = event.payload?.removed ?? 0;
@@ -506,17 +518,19 @@ function App() {
           `Trimmed ${n} unpinned item${n === 1 ? "" : "s"}${cap ? ` (cap ${cap})` : ""}`,
           2800
         );
-        void refresh();
+        void refreshRef.current();
         void refreshCounts();
       }
     }).then((u) => {
-      unlistenPrune = u;
+      if (disposed) u();
+      else unlistenPrune = u;
     });
     return () => {
+      disposed = true;
       unlistenDock?.();
       unlistenPrune?.();
     };
-  }, [refresh, refreshCounts]);
+  }, [refreshCounts]);
 
   const gridView =
     !settings.compactDock &&

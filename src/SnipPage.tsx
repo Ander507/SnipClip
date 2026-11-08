@@ -36,6 +36,7 @@ export function SnipPage() {
     document.body.classList.add("snip-mode");
 
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     void listen<SnipReadyPayload>("snip-ready", (event) => {
       const payload = event.payload;
       setOverlayMode(payload?.mode === "record" ? "record" : "snip");
@@ -54,10 +55,12 @@ export function SnipPage() {
       });
       setActive(true);
     }).then((u) => {
-      unlisten = u;
+      if (disposed) u();
+      else unlisten = u;
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
       document.documentElement.classList.remove("snip-mode");
       document.body.classList.remove("snip-mode");

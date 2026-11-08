@@ -414,18 +414,22 @@ fn prepare_desktop_capture(app: &AppHandle) {
 }
 
 #[tauri::command]
-pub fn capture_screen_region(
+pub async fn capture_screen_region(
     app: AppHandle,
     x: i32,
     y: i32,
     width: u32,
     height: u32,
 ) -> Result<CaptureResult, String> {
-    prepare_desktop_capture(&app);
-    let desktop = snip::virtual_desktop_from_tauri(&app).ok();
-    let origin = desktop.as_ref().map(|d| (d.x, d.y));
-    // Frontend sends absolute physical coords; keep relative=false. Origin retained for future overlay-local callers.
-    snip::capture_screen_region_ex(x, y, width, height, origin, false)
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_desktop_capture(&app);
+        let desktop = snip::virtual_desktop_from_tauri(&app).ok();
+        let origin = desktop.as_ref().map(|d| (d.x, d.y));
+        // Frontend sends absolute physical coords; keep relative=false. Origin retained for future overlay-local callers.
+        snip::capture_screen_region_ex(x, y, width, height, origin, false)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(serde::Serialize)]
@@ -1234,7 +1238,7 @@ pub fn close_screenshot_popup(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn start_region_recording(
+pub async fn start_region_recording(
     app: AppHandle,
     x: i32,
     y: i32,
@@ -1244,16 +1248,21 @@ pub fn start_region_recording(
     format: String,
     system_audio: Option<bool>,
 ) -> Result<(), String> {
-    prepare_desktop_capture(&app);
-    crate::recording::start_region_recording(
-        x,
-        y,
-        width as u32,
-        height as u32,
-        fps,
-        format,
-        system_audio.unwrap_or(false),
-    )
+    // Off the main thread: the 150 ms DWM settle + ffmpeg spawn used to freeze the UI.
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_desktop_capture(&app);
+        crate::recording::start_region_recording(
+            x,
+            y,
+            width.max(0) as u32,
+            height.max(0) as u32,
+            fps,
+            format,
+            system_audio.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

@@ -22,6 +22,7 @@ export function VideoEditorPage() {
     document.body.classList.add("video-editor-mode");
 
     let unlisten: (() => void) | undefined;
+    let disposed = false;
 
     void videoEditorReady()
       .then((pending) => {
@@ -34,10 +35,12 @@ export function VideoEditorPage() {
       setBusy(false);
       setSession(event.payload);
     }).then((u) => {
-      unlisten = u;
+      if (disposed) u();
+      else unlisten = u;
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
       document.documentElement.classList.remove("video-editor-mode");
       document.body.classList.remove("video-editor-mode");

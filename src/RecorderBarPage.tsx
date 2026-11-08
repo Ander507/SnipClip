@@ -21,6 +21,8 @@ export function RecorderBarPage() {
     if (root) root.style.backgroundColor = "transparent";
 
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const keep = (u: () => void) => (disposed ? u() : void unlisteners.push(u));
 
     function showBar(next: RecorderBarPayload) {
       setError(null);
@@ -38,14 +40,15 @@ export function RecorderBarPage() {
 
     void listen<RecorderBarPayload>("recorder-bar-show", (event) => {
       showBar(event.payload);
-    }).then((u) => unlisteners.push(u));
+    }).then(keep);
 
     void listen("recorder-bar-hide", () => {
       setPayload(null);
       setError(null);
-    }).then((u) => unlisteners.push(u));
+    }).then(keep);
 
     return () => {
+      disposed = true;
       for (const u of unlisteners) u();
       document.documentElement.classList.remove("recorder-mode");
       document.body.classList.remove("recorder-mode");

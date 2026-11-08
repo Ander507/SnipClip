@@ -398,6 +398,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_items_created ON items(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_items_pinned ON items(is_pinned);
             CREATE INDEX IF NOT EXISTS idx_items_type ON items(content_type);
+            CREATE INDEX IF NOT EXISTS idx_items_pinned_created ON items(is_pinned DESC, created_at DESC);
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY NOT NULL,
                 value TEXT NOT NULL
@@ -510,9 +511,12 @@ impl Database {
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
             .collect();
+        // One transaction instead of one fsync per row.
+        let _ = conn.execute_batch("BEGIN");
         for (id, ctype, content, preview) in items {
             let _ = Self::fts_upsert_conn(&conn, id, &ctype, &content, &preview);
         }
+        let _ = conn.execute_batch("COMMIT");
         Ok(())
     }
 
@@ -1021,15 +1025,19 @@ impl Database {
 
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
 
-        let last: Vec<(String, String)> = conn
-            .prepare("SELECT content_type, content FROM items ORDER BY id DESC LIMIT 8")
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        if last.iter().any(|(t, c)| t == content_type && c == content) {
+        // Compare inside SQLite so the recent rows (often multi-MB base64 images)
+        // are never copied into Rust just to check for a duplicate.
+        let is_dup: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM (SELECT content_type, content FROM items ORDER BY id DESC LIMIT 8)
+                    WHERE content_type = ?1 AND length(content) = length(?2) AND content = ?2
+                )",
+                params![content_type, content],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if is_dup {
             return Err("duplicate".into());
         }
 
@@ -1054,7 +1062,7 @@ impl Database {
         let id = conn.last_insert_rowid();
         let _ = Self::fts_upsert_conn(&conn, id, content_type, content, preview);
 
-        if let Err(e) = conn.execute(
+        match conn.execute(
             "DELETE FROM items WHERE id IN (
                 SELECT id FROM items WHERE is_pinned = 0
                 ORDER BY created_at DESC
@@ -1063,13 +1071,16 @@ impl Database {
             params![max_history],
         ) {
             // Row is already inserted — don't fail the whole write or the UI never sees it.
-            eprintln!("history trim skipped: {e}");
-        } else {
-            // Drop FTS rows for any items that were trimmed out of the main table
-            let _ = conn.execute(
-                "DELETE FROM items_fts WHERE rowid NOT IN (SELECT id FROM items)",
-                [],
-            );
+            Err(e) => eprintln!("history trim skipped: {e}"),
+            Ok(0) => {}
+            Ok(_) => {
+                // Drop FTS rows for items trimmed out of the main table (only when
+                // something was actually trimmed — this is a full scan).
+                let _ = conn.execute(
+                    "DELETE FROM items_fts WHERE rowid NOT IN (SELECT id FROM items)",
+                    [],
+                );
+            }
         }
 
         Ok(ClipboardItem {

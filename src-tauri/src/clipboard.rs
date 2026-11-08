@@ -378,6 +378,11 @@ mod clipboard_seq {
     pub fn acknowledge_current() {
         LAST_SEQ.store(current(), Ordering::Relaxed);
     }
+
+    /// Un-acknowledge so the next poll re-reads (e.g. the clipboard was locked by another app).
+    pub fn forget() {
+        LAST_SEQ.store(0, Ordering::Relaxed);
+    }
 }
 
 #[cfg(not(windows))]
@@ -391,6 +396,8 @@ mod clipboard_seq {
     }
 
     pub fn acknowledge_current() {}
+
+    pub fn forget() {}
 }
 
 /// Run a SnipClip-originated clipboard write and mark its result as already seen.
@@ -462,6 +469,8 @@ pub fn start_monitor(app: AppHandle) {
             }
 
             let Ok((text, image)) = read_clipboard_snapshot() else {
+                // Clipboard was locked by another app — retry next poll instead of losing this copy.
+                clipboard_seq::forget();
                 thread::sleep(Duration::from_millis(poll_interval_ms()));
                 continue;
             };

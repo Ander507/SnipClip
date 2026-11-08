@@ -38,6 +38,7 @@ export function ScreenshotPopupPage() {
 
     let dismissTimer: number | undefined;
     let unlisten: (() => void) | undefined;
+    let disposed = false;
 
     void listen<ScreenshotPopupData>("screenshot-popup-show", (event) => {
       busyRef.current = false;
@@ -51,10 +52,12 @@ export function ScreenshotPopupPage() {
         void dismiss();
       }, AUTO_DISMISS_MS);
     }).then((u) => {
-      unlisten = u;
+      if (disposed) u();
+      else unlisten = u;
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
       if (dismissTimer) window.clearTimeout(dismissTimer);
       document.documentElement.classList.remove("popup-mode");

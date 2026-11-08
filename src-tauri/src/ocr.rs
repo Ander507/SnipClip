@@ -25,13 +25,29 @@ fn ocrs_cache_dir() -> PathBuf {
 }
 
 fn download_model(url: &str, dest: &Path) -> Result<(), String> {
-    let response = ureq::get(url)
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(15))
+        .timeout_read(std::time::Duration::from_secs(60))
+        .build();
+    let response = agent
+        .get(url)
         .call()
         .map_err(|e| format!("failed to download OCR model: {e}"))?;
     let mut reader = response.into_reader();
-    let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-    std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
-    Ok(())
+    // Download to a temp file and rename, so an interrupted download never leaves a
+    // truncated model that `.exists()` would later treat as valid forever.
+    let tmp = dest.with_extension("rten.part");
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&tmp, dest).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 fn ensure_model_files() -> Result<(PathBuf, PathBuf), String> {

@@ -161,7 +161,7 @@ pub fn encrypt_vault(
     let plain = fs::read(db_path).map_err(|e| e.to_string())?;
     let out = encrypt_bytes(&key, &salt_arr, &plain)?;
     let enc_path = enc_db_path(db_path);
-    fs::write(&enc_path, &out).map_err(|e| e.to_string())?;
+    write_atomic(&enc_path, &out)?;
     remember_session(password, &salt_arr);
 
     if wipe_plain {
@@ -183,11 +183,23 @@ pub fn encrypt_vault_with_session(db_path: &Path, wipe_plain: bool) -> Result<()
     let plain = fs::read(db_path).map_err(|e| e.to_string())?;
     let out = encrypt_bytes(&session.0, &session.1, &plain)?;
     let enc_path = enc_db_path(db_path);
-    fs::write(&enc_path, &out).map_err(|e| e.to_string())?;
+    write_atomic(&enc_path, &out)?;
     if wipe_plain {
         wipe_plain_db(db_path);
     }
     Ok(())
+}
+
+/// Write via a temp file + rename so a crash mid-write never corrupts the only copy.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 fn wipe_plain_db(db_path: &Path) {
@@ -209,7 +221,7 @@ pub fn decrypt_vault(enc_path: &Path, password: &str) -> Result<PathBuf, String>
     salt.copy_from_slice(&enc[..SALT_LEN]);
     let plain = decrypt_bytes(password, &enc)?;
     let db_path = plain_db_path(enc_path);
-    fs::write(&db_path, &plain).map_err(|e| e.to_string())?;
+    write_atomic(&db_path, &plain)?;
     let _ = fs::remove_file(sidecar(&db_path, "-wal"));
     let _ = fs::remove_file(sidecar(&db_path, "-shm"));
     let _ = fs::remove_file(enc_path);

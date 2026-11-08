@@ -109,7 +109,7 @@ fn scale_down(img: RgbaImage) -> RgbaImage {
 struct Mp4PipeEncoder {
     child: Child,
     stdin: Option<ChildStdin>,
-    stderr: Option<std::process::ChildStderr>,
+    stderr: Option<JoinHandle<String>>,
     output: PathBuf,
     width: u32,
     height: u32,
@@ -134,6 +134,28 @@ pub fn prewarm_encoder() {
             eprintln!("ffmpeg prewarm failed: {error}");
         }
     });
+}
+
+/// Reads a child's stderr to EOF on its own thread, keeping only the last ~8 KB
+/// for error reporting, so ffmpeg can never block on a full pipe.
+pub(crate) fn spawn_stderr_drain(mut stderr: std::process::ChildStderr) -> JoinHandle<String> {
+    thread::spawn(move || {
+        const KEEP: usize = 8 * 1024;
+        let mut tail: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match stderr.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    tail.extend_from_slice(&buf[..n]);
+                    if tail.len() > KEEP * 2 {
+                        tail.drain(..tail.len() - KEEP);
+                    }
+                }
+            }
+        }
+        String::from_utf8_lossy(&tail).into_owned()
+    })
 }
 
 impl Mp4PipeEncoder {
@@ -175,7 +197,8 @@ impl Mp4PipeEncoder {
             .stdin
             .take()
             .ok_or_else(|| "ffmpeg stdin unavailable".to_string())?;
-        let stderr = child.stderr.take();
+        // Drain stderr continuously: if the pipe fills on a long recording, ffmpeg blocks.
+        let stderr = child.stderr.take().map(spawn_stderr_drain);
 
         Ok(Self {
             child,
@@ -212,11 +235,12 @@ impl Mp4PipeEncoder {
     fn finish(mut self) -> Result<PathBuf, String> {
         // dropping stdin to send EOF and awaiting ffmpeg exit so the mp4 container headers write properly
         drop(self.stdin.take());
-        let mut stderr_buf = String::new();
-        if let Some(mut stderr) = self.stderr.take() {
-            let _ = stderr.read_to_string(&mut stderr_buf);
-        }
         let status = self.child.wait().map_err(|e| e.to_string())?;
+        let stderr_buf = self
+            .stderr
+            .take()
+            .and_then(|h| h.join().ok())
+            .unwrap_or_default();
         if !status.success() {
             let _ = fs::remove_file(&self.output);
             eprintln!("ffmpeg stderr: {}", stderr_buf.trim());
