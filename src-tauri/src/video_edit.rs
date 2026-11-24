@@ -46,18 +46,24 @@ fn output_path(format: &str) -> Result<PathBuf, String> {
     } else {
         "mp4"
     };
-    let name = format!(
-        "SnipClip_{}.{}",
-        chrono::Local::now().format("%Y%m%d_%H%M%S"),
-        ext
-    );
-    Ok(dir.join(name))
+    // Second-resolution names collide when two exports land in the same second (or match the
+    // clip being edited), and ffmpeg runs with -y, so pick a name that is not taken yet.
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let mut path = dir.join(format!("SnipClip_{stamp}.{ext}"));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("SnipClip_{stamp}_{n}.{ext}"));
+        n += 1;
+    }
+    Ok(path)
 }
 
 fn run_ffmpeg(args: &[String]) -> Result<(), String> {
     let ffmpeg = ffmpeg_binary()?;
     let output = ffmpeg_command(&ffmpeg)
+        .arg("-nostdin")
         .args(args)
+        .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| format!("failed to run ffmpeg: {e}"))?;
     if !output.status.success() {
@@ -137,7 +143,10 @@ pub fn process_video_clip(
             args.extend(["-c".into(), "copy".into()]);
         }
         args.push(out_str.clone());
-        run_ffmpeg(&args)?;
+        if let Err(e) = run_ffmpeg(&args) {
+            let _ = fs::remove_file(&out);
+            return Err(e);
+        }
     } else if wants_gif {
         args.extend([
             "-ss".into(),
@@ -161,7 +170,10 @@ pub fn process_video_clip(
             "-an".into(),
             out_str.clone(),
         ]);
-        run_ffmpeg(&args)?;
+        if let Err(e) = run_ffmpeg(&args) {
+            let _ = fs::remove_file(&out);
+            return Err(e);
+        }
     } else {
         args.extend([
             "-ss".into(),
@@ -201,7 +213,10 @@ pub fn process_video_clip(
             ]);
         }
         args.push(out_str.clone());
-        run_ffmpeg(&args)?;
+        if let Err(e) = run_ffmpeg(&args) {
+            let _ = fs::remove_file(&out);
+            return Err(e);
+        }
     }
 
     if !out.is_file() || fs::metadata(&out).map(|m| m.len()).unwrap_or(0) == 0 {

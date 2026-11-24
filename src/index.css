@@ -190,6 +190,28 @@ html[data-glass="true"] .bg-hover {
   -webkit-backdrop-filter: none !important;
 }
 
+/* Media viewer — same rule as the snip editor: no glass behind video/canvas */
+[data-media-viewer],
+[data-media-viewer] .bg-raised,
+[data-media-viewer] .bg-app,
+[data-media-viewer] .bg-muted,
+[data-media-viewer] .bg-inset,
+[data-media-viewer] .bg-hover {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Media viewer — same rule as the snip editor: no glass behind video/canvas */
+[data-media-viewer],
+[data-media-viewer] .bg-raised,
+[data-media-viewer] .bg-app,
+[data-media-viewer] .bg-muted,
+[data-media-viewer] .bg-inset,
+[data-media-viewer] .bg-hover {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* Snipper window — fully transparent so the desktop shows through */
 html.snip-mode,
 html.snip-mode body,
@@ -257,7 +279,7 @@ html.palette-mode .command-palette-shell {
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
+  width: 8px;
 }
 
 /* Horizontal strips (popup category bars) scroll by wheel/drag without a visible bar */
@@ -273,13 +295,15 @@ html.palette-mode .command-palette-shell {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--sc-scroll);
+  background-color: var(--sc-scroll);
+  background-clip: padding-box;
   border-radius: 8px;
-  border: 2px solid var(--sc-app);
+  border: 2px solid transparent;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--sc-line-strong);
+  background-color: var(--sc-line-strong);
+  background-clip: padding-box;
 }
 
 [data-tauri-drag-region] {
@@ -306,4 +330,41 @@ code {
 
 input[type="checkbox"] {
   accent-color: var(--sc-accent);
+}
+
+/* Shared entrance animations (opacity/transform only) */
+@keyframes sc-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sc-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+}
+
+.sc-fade-in {
+  animation: sc-fade-in 150ms ease-out both;
+}
+
+.sc-pop-in {
+  animation: sc-pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-fade-in,
+  .sc-pop-in {
+    animation: none;
+  }
+}
+
+/* Keyboard focus ring, main window only (base layer so outline-none utilities still win) */
+@layer base {
+  html:not(.popup-mode):not(.snip-mode):not(.video-editor-mode) :focus-visible {
+    outline: 2px solid var(--sc-accent);
+    outline-offset: 1px;
+  }
 }

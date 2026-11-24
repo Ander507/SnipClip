@@ -10,6 +10,8 @@ mod ocr;
 mod paste;
 mod recorder_bar;
 mod recording;
+mod replay;
+mod replay_toast;
 mod scratch;
 mod screen_capture;
 mod screenshot_popup;
@@ -100,6 +102,9 @@ pub fn run() {
             commands::close_screenshot_popup,
             commands::start_region_recording,
             commands::stop_region_recording,
+            commands::replay_status,
+            commands::delete_item_file,
+            commands::save_replay_clip,
             commands::pause_region_recording,
             commands::finalize_recording,
             commands::process_video_clip,
@@ -216,6 +221,10 @@ pub fn run() {
             {
                 let settings = database.get_settings().unwrap_or_default();
                 themes::sync_window_backgrounds(app.handle(), &settings);
+                if settings.replay_enabled {
+                    let replay_settings = settings.clone();
+                    std::thread::spawn(move || replay::apply_settings(&replay_settings));
+                }
                 app.manage(Arc::new(HotkeyState::from_settings(&settings)));
                 // Plugin install + register_all off the blocking path so a hotkey failure cannot kill startup
                 if let Err(e) = hotkeys::bootstrap_nonblocking(app.handle(), &settings) {
@@ -341,6 +350,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let RunEvent::Exit = event {
+                replay::stop();
                 // Encrypt + wipe plain DB when a vault password is active this session.
                 if let Ok(app_data) = app_handle.path().app_data_dir() {
                     let db_path = app_data.join("snipclip.db");

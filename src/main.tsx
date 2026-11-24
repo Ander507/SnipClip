@@ -17,6 +17,9 @@ const CommandPalette = lazy(() =>
 const ScreenshotPopup = lazy(() =>
   import("./ScreenshotPopupPage").then((m) => ({ default: m.ScreenshotPopup }))
 );
+const ReplayToastPage = lazy(() =>
+  import("./ReplayToastPage").then((m) => ({ default: m.ReplayToastPage }))
+);
 const VideoEditorPage = lazy(() =>
   import("./VideoEditorPage").then((m) => ({ default: m.VideoEditorPage }))
 );
@@ -28,13 +31,14 @@ const isPopupView = params.get("view") === "popup";
 const isRecorderView = params.get("view") === "recorder";
 const isPaletteView = params.get("view") === "palette";
 const isVideoEditorView = params.get("view") === "video-editor";
+const isReplayToastView = params.get("view") === "replay-toast";
 
 if (isSnipMode) {
   document.documentElement.classList.add("snip-mode");
   document.body.classList.add("snip-mode");
 }
 
-if (isPopupView || isRecorderView || isPaletteView) {
+if (isPopupView || isRecorderView || isPaletteView || isReplayToastView) {
   document.documentElement.classList.add("popup-mode");
   document.body.classList.add("popup-mode");
   const root = document.getElementById("root");
@@ -59,7 +63,9 @@ if (isVideoEditorView) {
 }
 
 // Paint the last saved theme before React mounts; each window confirms it once IPC answers.
-applyCachedTheme({ effects: !(isPopupView || isRecorderView || isPaletteView) });
+applyCachedTheme({
+  effects: !(isPopupView || isRecorderView || isPaletteView || isReplayToastView),
+});
 
 // Disable the WebView / Edge right-click menu in the desktop shell
 document.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -68,7 +74,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {/* null fallback keeps the transparent overlay windows from flashing a background */}
     <Suspense fallback={null}>
-      {isPopupView ? (
+      {isReplayToastView ? (
+        <ReplayToastPage />
+      ) : isPopupView ? (
         <ScreenshotPopup />
       ) : isPaletteView ? (
         <CommandPalette />

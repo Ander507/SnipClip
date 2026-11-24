@@ -1,0 +1,6 @@
+.vite/
+# Generated captures and media (rebuild with: node figma-harness/capture.mjs)
+out/
+public/*.mp4
+before/
+public/media/

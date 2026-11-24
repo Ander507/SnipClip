@@ -13,14 +13,19 @@ import {
   X,
   Sigma,
   Languages,
+  Play,
+  Maximize2,
+  FolderOpen,
+  Film,
 } from "lucide-react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { ClipboardItem } from "../lib/types";
 import type { Density } from "../lib/uiPrefs";
 import { detectLanguage, languageLabel } from "../lib/codeDetect";
 import { parseTranslatedContent } from "../lib/translatedContent";
 import { parseMathContent } from "../lib/mathContent";
 import { charCountLabel, dimensionsLabel, sourceLabel } from "../lib/itemMeta";
-import { useItemThumbnail } from "../lib/thumbnails";
+import { useItemThumbnail, useVideoPoster } from "../lib/thumbnails";
 import { CodePreview } from "./CodePreview";
 import { SmartTextPreview } from "./SmartTextPreview";
 import { displayUrl, isLinkItem, linkHrefFromText } from "../lib/urls";
@@ -30,10 +35,13 @@ import {
   ROW_METRICS,
   TypeIcon,
   coverEdge,
+  formatDuration,
   imageFallback,
   isImageItem,
   isVideoItem,
   itemTimeLabel,
+  videoFileName,
+  videoKindLabel,
 } from "./itemParts";
 
 /** Enough for three wrapped lines; keeps huge clips cheap to lay out. */
@@ -107,6 +115,7 @@ export function ClipboardItemRow({
     imageFallback(item),
     isImage
   );
+  const poster = useVideoPoster(item.content, isVideo);
   const source = sourceLabel(item);
   const dims = dimensionsLabel(item);
   const chars =
@@ -148,7 +157,7 @@ export function ClipboardItemRow({
       role="option"
       aria-selected={selected}
       className={clsx(
-        "group relative flex w-full cursor-pointer rounded-lg border transition-colors",
+        "group relative flex w-full cursor-pointer rounded-xl border transition-colors",
         m.pad,
         m.gap,
         isCode ? "items-start" : "items-center",
@@ -161,8 +170,7 @@ export function ClipboardItemRow({
       }}
       onDoubleClick={() => {
         if (editing) return;
-        if (isImage) onPreviewImage();
-        else if (isVideo) onEditVideo?.();
+        if (isImage || isVideo) onPreviewImage();
         else onCopy();
       }}
     >
@@ -173,15 +181,20 @@ export function ClipboardItemRow({
         />
       )}
 
-      {isImage ? (
+      {isImage || isVideo ? (
         <div
-          className="shrink-0 overflow-hidden rounded-md border border-line bg-inset"
+          className="relative shrink-0 cursor-pointer overflow-hidden rounded-md border border-line bg-inset"
           style={{ width: m.thumbW, height: m.thumbH }}
-          title="Double-click to preview"
+          title={isVideo ? "Play" : "Open"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreviewImage();
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
         >
-          {thumb ? (
+          {(isImage ? thumb : poster.src) ? (
             <img
-              src={thumb}
+              src={(isImage ? thumb : poster.src) ?? undefined}
               alt=""
               draggable={false}
               decoding="async"
@@ -189,8 +202,15 @@ export function ClipboardItemRow({
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-fg-muted">
-              <TypeIcon type={item.contentType} />
+              {isVideo ? <Film size={14} /> : <TypeIcon type={item.contentType} />}
             </div>
+          )}
+          {isVideo && (
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white">
+                <Play size={10} fill="currentColor" />
+              </span>
+            </span>
           )}
         </div>
       ) : (
@@ -199,7 +219,6 @@ export function ClipboardItemRow({
             "flex shrink-0 items-center justify-center rounded-md border border-line bg-muted text-fg-muted",
             m.iconBox
           )}
-          title={isVideo ? "Double-click to edit" : undefined}
         >
           <TypeIcon type={item.contentType} isCode={isCode} />
         </div>
@@ -214,7 +233,8 @@ export function ClipboardItemRow({
           </p>
         ) : isVideo ? (
           <p className="truncate text-xs font-medium text-fg-secondary">
-            {item.preview || (item.contentType === "gif" ? "GIF recording" : "Video recording")}
+            {videoKindLabel(item)}
+            {poster.durationSec != null && ` · ${formatDuration(poster.durationSec)}`}
           </p>
         ) : isMath ? (
           <div className="min-w-0 space-y-1">
@@ -292,7 +312,12 @@ export function ClipboardItemRow({
         <MetaLine
           className="mt-1"
           parts={[
-            !isImage && {
+            isVideo && {
+              key: "file",
+              shrink: true,
+              node: <span className="min-w-0 truncate font-mono">{videoFileName(item)}</span>,
+            },
+            !isImage && !isVideo && {
               key: "type",
               node: (
                 <span className="font-mono uppercase tracking-wider text-fg-muted">{typeTag}</span>
@@ -310,7 +335,7 @@ export function ClipboardItemRow({
                 </time>
               ),
             },
-            !isImage && source
+            !isImage && !isVideo && source
               ? {
                   key: "source",
                   shrink: true,
@@ -363,9 +388,24 @@ export function ClipboardItemRow({
                 <Pencil size={13} />
               </ActionButton>
             )}
+            {isImage && (
+              <ActionButton title="Open" onClick={onPreviewImage}>
+                <Maximize2 size={14} />
+              </ActionButton>
+            )}
             {isVideo && onEditVideo && (
               <ActionButton title="Edit recording" onClick={onEditVideo}>
-                <Pencil size={13} />
+                <Pencil size={14} />
+              </ActionButton>
+            )}
+            {isVideo && (
+              <ActionButton
+                title="Show in folder"
+                onClick={() => {
+                  revealItemInDir(item.content).catch((err) => console.error(err));
+                }}
+              >
+                <FolderOpen size={14} />
               </ActionButton>
             )}
             {isLink && href && (
@@ -413,7 +453,11 @@ export function ClipboardItemRow({
             >
               <Pin size={13} />
             </ActionButton>
-            <ActionButton title="Delete" tone="danger" onClick={onDelete}>
+            <ActionButton
+              title={isVideo ? "Remove from library (file kept · Shift+Del deletes it)" : "Delete"}
+              tone="danger"
+              onClick={onDelete}
+            >
               <Trash2 size={13} />
             </ActionButton>
           </>

@@ -1,7 +1,7 @@
 use gif::{DisposalMethod, Encoder, Frame, Repeat};
 use image::RgbaImage;
 use parking_lot::Mutex;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -76,8 +76,19 @@ struct ActiveRecording {
 static RECORDING: Mutex<Option<ActiveRecording>> = Mutex::new(None);
 
 pub fn recordings_dir() -> Result<PathBuf, String> {
-    let base = crate::screenshot_popup::pictures_screenshots_dir()?;
-    Ok(base.parent().unwrap_or(&base).join("recordings"))
+    // Videos, not Pictures. Older recordings stay in Pictures/SnipClip/recordings and keep
+    // working: items store absolute paths and the asset scope still covers Pictures.
+    #[cfg(windows)]
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return Ok(PathBuf::from(profile).join("Videos").join("SnipClip"));
+    }
+    if let Ok(videos) = std::env::var("XDG_VIDEOS_DIR") {
+        return Ok(PathBuf::from(videos).join("SnipClip"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return Ok(PathBuf::from(home).join("Videos").join("SnipClip"));
+    }
+    Err("could not resolve the Videos/SnipClip directory".into())
 }
 
 /// forcing even width and height so libx264 doesn't panic on odd pixel dimensions
@@ -300,29 +311,37 @@ fn mux_system_audio(video: &Path, audio: &Path, output: &Path) -> Result<(), Str
     Ok(())
 }
 
-fn encode_gif(frames: &[RgbaImage], fps: u32, path: &Path) -> Result<(), String> {
-    if frames.is_empty() {
-        return Err("no frames captured".into());
-    }
-    let first = &frames[0];
-    let w = first.width() as u16;
-    let h = first.height() as u16;
-    let file = File::create(path).map_err(|e| e.to_string())?;
-    let mut encoder =
-        Encoder::new(std::io::BufWriter::new(file), w, h, &[]).map_err(|e| e.to_string())?;
-    encoder
-        .set_repeat(Repeat::Infinite)
-        .map_err(|e| e.to_string())?;
+/// Encodes frames as they arrive, so a long GIF never sits in RAM as raw RGBA
+/// (450 frames at 1280 px used to be ~1.6 GB before the first byte was written).
+fn encode_gif_stream(
+    frames: mpsc::Receiver<RgbaImage>,
+    fps: u32,
+    path: &Path,
+) -> Result<(), String> {
     let delay = (100 / fps.max(1).min(30)) as u16;
-
+    let mut encoder: Option<(Encoder<std::io::BufWriter<fs::File>>, u16, u16)> = None;
     for frame in frames {
-        let mut rgba = frame.as_raw().to_vec();
+        let (w, h) = (frame.width() as u16, frame.height() as u16);
+        if encoder.is_none() {
+            let file = fs::File::create(path).map_err(|e| e.to_string())?;
+            let mut enc = Encoder::new(std::io::BufWriter::new(file), w, h, &[])
+                .map_err(|e| e.to_string())?;
+            enc.set_repeat(Repeat::Infinite).map_err(|e| e.to_string())?;
+            encoder = Some((enc, w, h));
+        }
+        let Some((enc, ew, eh)) = encoder.as_mut() else {
+            continue;
+        };
+        if (w, h) != (*ew, *eh) {
+            continue;
+        }
+        let mut rgba = frame.into_raw();
         // speed 1 is the slowest quantiser setting and cost ~275 ms per frame; 10 is the
         // crate's balanced setting and keeps stopping a GIF from hanging for half a minute
         let mut gif_frame = Frame::from_rgba_speed(w, h, &mut rgba, 10);
         gif_frame.delay = delay;
         gif_frame.dispose = DisposalMethod::Background;
-        encoder.write_frame(&gif_frame).map_err(|e| e.to_string())?;
+        enc.write_frame(&gif_frame).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -339,27 +358,55 @@ fn capture_gif_loop(
     ready: &mpsc::Sender<ReadySignal>,
 ) -> Result<PathBuf, String> {
     let frame_interval = Duration::from_millis((1000 / fps.max(1).min(30)) as u64);
-    let mut frames: Vec<RgbaImage> = Vec::new();
     let mut capturer = crate::screen_capture::RegionCapturer::new(x, y, width, height)?;
     let mut scratch = vec![0u8; capturer.frame_bytes()];
+
+    let (tx, rx) = mpsc::channel::<RgbaImage>();
+    let encode_to = output.clone();
+    let encoder = thread::Builder::new()
+        .name("gif-encode".into())
+        .spawn(move || encode_gif_stream(rx, fps, &encode_to))
+        .map_err(|e| e.to_string())?;
     let _ = ready.send(Ok(()));
 
-    while !stop.load(Ordering::SeqCst) && frames.len() < MAX_FRAMES {
+    let mut sent = 0usize;
+    let mut capture_error = None;
+    while !stop.load(Ordering::SeqCst) && sent < MAX_FRAMES {
         let tick = Instant::now();
         if !paused.load(Ordering::SeqCst) {
-            let raw = capturer.capture_rgba(&mut scratch)?;
-            frames.push(scale_down(raw));
+            match capturer.capture_rgba(&mut scratch) {
+                // a closed channel means the encoder already failed; its error is reported below
+                Ok(raw) => {
+                    if tx.send(scale_down(raw)).is_err() {
+                        break;
+                    }
+                    sent += 1;
+                }
+                Err(e) => {
+                    capture_error = Some(e);
+                    break;
+                }
+            }
         }
         let elapsed = tick.elapsed();
         if elapsed < frame_interval {
             thread::sleep(frame_interval - elapsed);
         }
     }
+    drop(tx);
 
-    if frames.is_empty() {
-        return Err("no frames captured".into());
+    let encoded = encoder
+        .join()
+        .unwrap_or_else(|_| Err("gif encoder thread panicked".into()));
+    let result = match (capture_error, encoded) {
+        (Some(e), _) | (None, Err(e)) => Err(e),
+        (None, Ok(())) if sent == 0 => Err("no frames captured".to_string()),
+        (None, Ok(())) => Ok(()),
+    };
+    if let Err(e) = result {
+        let _ = fs::remove_file(&output);
+        return Err(e);
     }
-    encode_gif(&frames, fps, &output)?;
     Ok(output)
 }
 

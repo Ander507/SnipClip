@@ -153,6 +153,72 @@ pub struct AppSettings {
     /// User's own KLIPY GIF API key. Empty = fall back to the key baked in at build time.
     #[serde(default)]
     pub klipy_api_key: String,
+    /// Instant replay: keep the last N seconds of the screen in a rolling buffer.
+    #[serde(default)]
+    pub replay_enabled: bool,
+    #[serde(default = "default_replay_seconds")]
+    pub replay_seconds: u32,
+    #[serde(default = "default_replay_hotkey")]
+    pub replay_hotkey: String,
+    #[serde(default = "default_replay_fps")]
+    pub replay_fps: u32,
+    /// "low" | "medium" | "high"
+    #[serde(default = "default_replay_quality")]
+    pub replay_quality: String,
+    /// "native" | "1080p" | "720p"
+    #[serde(default = "default_replay_resolution")]
+    pub replay_resolution: String,
+    #[serde(default = "default_true")]
+    pub replay_audio: bool,
+    /// DXGI output index (0 = primary on most setups).
+    #[serde(default)]
+    pub replay_monitor: u32,
+    /// Corner "Clip saved" toast (never takes focus).
+    #[serde(default = "default_true")]
+    pub replay_notify_popup: bool,
+    /// Save chime. Note: desktop audio capture records it into later clips.
+    #[serde(default = "default_true")]
+    pub replay_notify_sound: bool,
+}
+
+pub const DEFAULT_HOTKEY_REPLAY: &str = "Alt+F10";
+
+fn default_replay_seconds() -> u32 {
+    30
+}
+
+fn default_replay_hotkey() -> String {
+    DEFAULT_HOTKEY_REPLAY.to_string()
+}
+
+fn default_replay_fps() -> u32 {
+    60
+}
+
+fn default_replay_quality() -> String {
+    "medium".to_string()
+}
+
+fn default_replay_resolution() -> String {
+    "native".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn normalize_replay_quality(v: &str) -> String {
+    match v {
+        "low" | "medium" | "high" => v.to_string(),
+        _ => default_replay_quality(),
+    }
+}
+
+fn normalize_replay_resolution(v: &str) -> String {
+    match v {
+        "native" | "1080p" | "720p" => v.to_string(),
+        _ => default_replay_resolution(),
+    }
 }
 
 fn default_snip_delay_ms() -> u32 {
@@ -237,6 +303,20 @@ pub fn default_sidebar_tabs() -> Vec<String> {
     ]
 }
 
+/// The sidebar category that lists an item of this content type. Must match the
+/// filters in `Database::list`; `category_counts_match_list` enforces that.
+fn category_of_content_type(content_type: &str) -> Option<&'static str> {
+    match content_type {
+        "text" | "translated" => Some("text"),
+        "image" => Some("images"),
+        "screenshot" => Some("screenshots"),
+        "video" | "gif" => Some("videos"),
+        "link" => Some("links"),
+        "math" => Some("math"),
+        _ => None,
+    }
+}
+
 const SIDEBAR_TAB_IDS: &[&str] = &[
     "all",
     "text",
@@ -305,6 +385,16 @@ impl Default for AppSettings {
             theme_backdrop: default_theme_backdrop(),
             ui_prefs: None,
             klipy_api_key: String::new(),
+            replay_enabled: false,
+            replay_seconds: default_replay_seconds(),
+            replay_hotkey: default_replay_hotkey(),
+            replay_fps: default_replay_fps(),
+            replay_quality: default_replay_quality(),
+            replay_resolution: default_replay_resolution(),
+            replay_audio: true,
+            replay_monitor: 0,
+            replay_notify_popup: true,
+            replay_notify_sound: true,
         }
     }
 }
@@ -348,6 +438,16 @@ pub struct Database {
     conn: Mutex<Connection>,
 }
 
+/// Created after `move_content_last`, because rebuilding the table drops its indexes.
+/// `idx_items_pinned` is gone on purpose: the composite index covers it and also serves the
+/// list ordering without a sort.
+const ITEM_INDEXES: &str = "
+    DROP INDEX IF EXISTS idx_items_pinned;
+    CREATE INDEX IF NOT EXISTS idx_items_created ON items(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_items_type ON items(content_type);
+    CREATE INDEX IF NOT EXISTS idx_items_pinned_created ON items(is_pinned DESC, created_at DESC);
+";
+
 impl Database {
     pub fn open(path: PathBuf) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
@@ -387,18 +487,22 @@ impl Database {
         conn.execute_batch(
             "
             PRAGMA journal_mode = WAL;
+            -- With WAL, NORMAL stays crash-safe and skips an fsync on every single copy.
+            PRAGMA synchronous = NORMAL;
+            -- `content` is declared last on purpose, see `move_content_last`.
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content_type TEXT NOT NULL,
-                content TEXT NOT NULL,
                 preview TEXT NOT NULL,
                 is_pinned INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                last_used_at TEXT,
+                source_app TEXT,
+                width INTEGER,
+                height INTEGER,
+                content TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_items_created ON items(created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_items_pinned ON items(is_pinned);
-            CREATE INDEX IF NOT EXISTS idx_items_type ON items(content_type);
-            CREATE INDEX IF NOT EXISTS idx_items_pinned_created ON items(is_pinned DESC, created_at DESC);
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY NOT NULL,
                 value TEXT NOT NULL
@@ -422,6 +526,72 @@ impl Database {
         let _ = conn.execute("ALTER TABLE items ADD COLUMN source_app TEXT", []);
         let _ = conn.execute("ALTER TABLE items ADD COLUMN width INTEGER", []);
         let _ = conn.execute("ALTER TABLE items ADD COLUMN height INTEGER", []);
+        Self::move_content_last(conn)?;
+        conn.execute_batch(ITEM_INDEXES).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// One-time rebuild for vaults created before `content` was the last column.
+    ///
+    /// SQLite stores a row's columns in declaration order, and a large value spills into a
+    /// chain of overflow pages that has to be walked to reach anything stored behind it. With
+    /// `content` (often a multi-MB base64 image) sitting third, every list, search, sort and
+    /// history trim read every image in the vault just to get at `preview`, `is_pinned` and
+    /// `created_at`: 60 ms instead of 0.2 ms on a 280 MB vault, and far worse on a cold cache.
+    fn move_content_last(conn: &Connection) -> Result<(), String> {
+        let columns: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT name FROM pragma_table_info('items')")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(Result::ok).collect()
+        };
+        if columns.last().map(String::as_str) == Some("content") {
+            return Ok(());
+        }
+
+        let rebuilt = conn.execute_batch(
+            "
+            BEGIN IMMEDIATE;
+            DROP TABLE IF EXISTS items_reordered;
+            CREATE TABLE items_reordered (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_type TEXT NOT NULL,
+                preview TEXT NOT NULL,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                last_used_at TEXT,
+                source_app TEXT,
+                width INTEGER,
+                height INTEGER,
+                content TEXT NOT NULL
+            );
+            INSERT INTO items_reordered
+                (id, content_type, preview, is_pinned, created_at, use_count, last_used_at,
+                 source_app, width, height, content)
+            SELECT id, content_type, preview, is_pinned, created_at, use_count, last_used_at,
+                   source_app, width, height, content
+            FROM items;
+            -- Carry the id counter over, so ids of deleted rows are never handed out again.
+            DELETE FROM sqlite_sequence WHERE name = 'items_reordered';
+            INSERT INTO sqlite_sequence (name, seq)
+                SELECT 'items_reordered', seq FROM sqlite_sequence WHERE name = 'items';
+            DROP TABLE items;
+            ALTER TABLE items_reordered RENAME TO items;
+            COMMIT;
+            ",
+        );
+        if let Err(e) = rebuilt {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(format!("vault upgrade failed: {e}"));
+        }
+        // Hand the old table's pages back to the disk; otherwise the file stays twice as big.
+        if let Err(e) = conn.execute_batch("VACUUM;") {
+            eprintln!("vacuum after vault upgrade skipped: {e}");
+        }
         Ok(())
     }
 
@@ -532,7 +702,7 @@ impl Database {
                 if cleaned.is_empty() {
                     None
                 } else {
-                    Some(format!("{cleaned}*"))
+                    Some(format!("\"{cleaned}\"*"))
                 }
             })
             .collect();
@@ -775,6 +945,34 @@ impl Database {
             theme_backdrop,
             ui_prefs,
             klipy_api_key,
+            replay_enabled: self.get_setting("replay_enabled")?.as_deref() == Some("1"),
+            replay_seconds: self
+                .get_setting("replay_seconds")?
+                .and_then(|v| v.parse::<u32>().ok())
+                .map(|n| n.clamp(crate::replay::MIN_SECONDS, crate::replay::MAX_SECONDS))
+                .unwrap_or_else(default_replay_seconds),
+            replay_hotkey: self
+                .get_setting("replay_hotkey")?
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(default_replay_hotkey),
+            replay_fps: match self.get_setting("replay_fps")?.as_deref() {
+                Some("30") => 30,
+                _ => 60,
+            },
+            replay_quality: normalize_replay_quality(
+                self.get_setting("replay_quality")?.as_deref().unwrap_or(""),
+            ),
+            replay_resolution: normalize_replay_resolution(
+                self.get_setting("replay_resolution")?.as_deref().unwrap_or(""),
+            ),
+            replay_audio: self.get_setting("replay_audio")?.as_deref() != Some("0"),
+            replay_monitor: self
+                .get_setting("replay_monitor")?
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0)
+                .min(15),
+            replay_notify_popup: self.get_setting("replay_notify_popup")?.as_deref() != Some("0"),
+            replay_notify_sound: self.get_setting("replay_notify_sound")?.as_deref() != Some("0"),
         })
     }
 
@@ -917,6 +1115,25 @@ impl Database {
             self.set_setting("ui_prefs", "")?;
         }
         self.set_setting("klipy_api_key", settings.klipy_api_key.trim())?;
+        self.set_setting("replay_enabled", if settings.replay_enabled { "1" } else { "0" })?;
+        self.set_setting(
+            "replay_seconds",
+            &settings
+                .replay_seconds
+                .clamp(crate::replay::MIN_SECONDS, crate::replay::MAX_SECONDS)
+                .to_string(),
+        )?;
+        self.set_setting("replay_hotkey", settings.replay_hotkey.trim())?;
+        self.set_setting("replay_fps", if settings.replay_fps >= 60 { "60" } else { "30" })?;
+        self.set_setting("replay_quality", &normalize_replay_quality(&settings.replay_quality))?;
+        self.set_setting(
+            "replay_resolution",
+            &normalize_replay_resolution(&settings.replay_resolution),
+        )?;
+        self.set_setting("replay_audio", if settings.replay_audio { "1" } else { "0" })?;
+        self.set_setting("replay_monitor", &settings.replay_monitor.min(15).to_string())?;
+        self.set_setting("replay_notify_popup", if settings.replay_notify_popup { "1" } else { "0" })?;
+        self.set_setting("replay_notify_sound", if settings.replay_notify_sound { "1" } else { "0" })?;
         // last_cleanup is owned by check_and_run_auto_clear — do not overwrite from UI
         Ok(())
     }
@@ -1031,7 +1248,7 @@ impl Database {
             .query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM (SELECT content_type, content FROM items ORDER BY id DESC LIMIT 8)
-                    WHERE content_type = ?1 AND length(content) = length(?2) AND content = ?2
+                    WHERE content_type = ?1 AND octet_length(content) = octet_length(?2) AND content = ?2
                 )",
                 params![content_type, content],
                 |row| row.get(0),
@@ -1226,6 +1443,21 @@ impl Database {
         }
 
         if let Some(match_q) = Self::fts_match_query(trimmed) {
+            // A broken index or an odd query must degrade to the LIKE search below,
+            // never fail the whole search.
+            match self.search_fts(&match_q, limit) {
+                Ok(items) if !items.is_empty() => return Ok(items),
+                Ok(_) => {}
+                Err(e) => eprintln!("fts search failed, falling back: {e}"),
+            }
+        }
+
+        // Fallback for punctuation-only queries or empty FTS hits
+        self.list(None, Some(trimmed), limit)
+    }
+
+    fn search_fts(&self, match_q: &str, limit: i64) -> Result<Vec<ClipboardItem>, String> {
+        {
             let conn = self.conn.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn
                 .prepare(
@@ -1234,7 +1466,7 @@ impl Database {
                         i.preview, i.is_pinned, i.created_at, i.source_app, i.width, i.height
                      FROM items_fts f
                      JOIN items i ON i.id = f.rowid
-                     WHERE f MATCH ?1
+                     WHERE items_fts MATCH ?1
                      ORDER BY i.is_pinned DESC,
                               min(i.use_count, 5) DESC,
                               COALESCE(i.last_used_at, i.created_at) DESC
@@ -1248,67 +1480,43 @@ impl Database {
             for row in rows {
                 items.push(row.map_err(|e| e.to_string())?);
             }
-            if !items.is_empty() {
-                return Ok(items);
-            }
+            Ok(items)
         }
-
-        // Fallback for punctuation-only queries or empty FTS hits
-        self.list(None, Some(trimmed), limit)
     }
 
     /// Per-category counts for the sidebar — one row per visible tab.
+    /// Badge counts keyed by sidebar category id ("images", "videos", …), the same ids
+    /// `list(Some(category), …)` filters on, plus "pinned" and "all".
     pub fn category_counts(&self) -> Result<Vec<(String, i64)>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare(
-                "SELECT content_type, COUNT(*) FROM items GROUP BY content_type",
-            )
+            .prepare("SELECT content_type, COUNT(*) FROM items GROUP BY content_type")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |row| {
-                let ctype: String = row.get(0)?;
-                let count: i64 = row.get(1)?;
-                Ok((ctype, count))
-            })
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
             .map_err(|e| e.to_string())?;
         let mut out: Vec<(String, i64)> = Vec::new();
         for row in rows {
-            out.push(row.map_err(|e| e.to_string())?);
+            let (ctype, count) = row.map_err(|e| e.to_string())?;
+            // Content types with no tab of their own (e.g. code) only show under All.
+            let Some(cat) = category_of_content_type(&ctype) else {
+                continue;
+            };
+            match out.iter_mut().find(|(k, _)| k == cat) {
+                Some((_, n)) => *n += count,
+                None => out.push((cat.to_string(), count)),
+            }
         }
         let pinned = conn
-            .query_row(
-                "SELECT COUNT(*) FROM items WHERE is_pinned = 1",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT COUNT(*) FROM items WHERE is_pinned = 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .map_err(|e| e.to_string())?;
         out.push(("pinned".into(), pinned));
         let total = conn
-            .query_row(
-                "SELECT COUNT(*) FROM items",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT COUNT(*) FROM items", [], |row| row.get::<_, i64>(0))
             .map_err(|e| e.to_string())?;
         out.push(("all".into(), total));
-        // Roll translated items into the Text badge
-        let mut text_extra: i64 = 0;
-        out.retain(|(k, v)| {
-            if k == "translated" {
-                text_extra += *v;
-                false
-            } else {
-                true
-            }
-        });
-        if text_extra > 0 {
-            if let Some((_, n)) = out.iter_mut().find(|(k, _)| k == "text") {
-                *n += text_extra;
-            } else {
-                out.push(("text".into(), text_extra));
-            }
-        }
         Ok(out)
     }
 
@@ -1319,6 +1527,18 @@ impl Database {
              FROM items WHERE id = ?1",
             params![id],
             item_from_row,
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    /// Content type and byte length of an item, without loading the content itself.
+    pub fn content_info(&self, id: i64) -> Result<Option<(String, usize)>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT content_type, octet_length(content) FROM items WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize)),
         )
         .optional()
         .map_err(|e| e.to_string())
@@ -1458,5 +1678,174 @@ fn system_uptime_secs() -> Option<u64> {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: badges used raw content types ("image") while the sidebar looks up tab
+    /// ids ("images"), so Images / Screenshots / Clips / Links never showed a count.
+    #[test]
+    fn category_counts_match_list() {
+        let db = Database::open(temp_db("counts")).unwrap();
+        let samples = [
+            ("text", "hello"),
+            ("translated", "hola
+
+——— original ———
+hello"),
+            ("image", "data:image/png;base64,AAAA"),
+            ("image", "data:image/png;base64,BBBB"),
+            ("screenshot", "data:image/png;base64,CCCC"),
+            ("video", "C:/clips/a.mp4"),
+            ("gif", "C:/clips/b.gif"),
+            ("link", "https://example.com"),
+            ("math", "2+2"),
+            ("code", "fn main() {}"),
+        ];
+        for (ctype, content) in samples {
+            db.insert(ctype, content, content).unwrap();
+        }
+        let first = db.list(Some("images"), None, 1000).unwrap()[0].id;
+        db.toggle_pin(first).unwrap();
+
+        let counts: std::collections::HashMap<String, i64> =
+            db.category_counts().unwrap().into_iter().collect();
+        for tab in SIDEBAR_TAB_IDS {
+            let listed = if *tab == "all" {
+                db.list(None, None, 1000).unwrap().len()
+            } else {
+                db.list(Some(tab), None, 1000).unwrap().len()
+            } as i64;
+            assert_eq!(
+                counts.get(*tab).copied().unwrap_or(0),
+                listed,
+                "badge for tab {tab:?} must equal what the tab lists"
+            );
+        }
+        assert_eq!(counts["images"], 2);
+        assert_eq!(counts["videos"], 2);
+        assert_eq!(counts["text"], 2);
+        assert_eq!(counts["all"], 10);
+    }
+
+    fn temp_db(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "snipclip-test-{name}-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("snipclip.db")
+    }
+
+    fn columns(db: &Database) -> Vec<String> {
+        let conn = db.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info('items')")
+            .unwrap();
+        let cols = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        cols
+    }
+
+    #[test]
+    fn new_vault_keeps_content_last() {
+        let path = temp_db("new");
+        let db = Database::open(path.clone()).unwrap();
+        assert_eq!(columns(&db).last().map(String::as_str), Some("content"));
+        let item = db.insert("text", "hello world", "hello world").unwrap();
+        assert_eq!(db.get(item.id).unwrap().unwrap().content, "hello world");
+        assert!(db.insert("text", "hello world", "hello world").is_err());
+        drop(db);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn old_vault_is_reordered_without_losing_anything() {
+        let path = temp_db("old");
+        {
+            // the schema as shipped up to v1.7.0, with `content` third
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    preview TEXT NOT NULL,
+                    is_pinned INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_items_pinned ON items(is_pinned);
+                ALTER TABLE items ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE items ADD COLUMN last_used_at TEXT;
+                ALTER TABLE items ADD COLUMN source_app TEXT;
+                INSERT INTO items (content_type, content, preview, is_pinned, created_at, use_count, source_app)
+                    VALUES ('text', 'first clip', 'first', 1, '2026-01-01T00:00:00+00:00', 3, 'notepad.exe');
+                INSERT INTO items (content_type, content, preview, is_pinned, created_at)
+                    VALUES ('link', 'https://example.com', 'example', 0, '2026-01-02T00:00:00+00:00');
+                INSERT INTO items (content_type, content, preview, is_pinned, created_at)
+                    VALUES ('text', 'deleted later', 'deleted', 0, '2026-01-03T00:00:00+00:00');
+                DELETE FROM items WHERE id = 3;",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(path.clone()).unwrap();
+        assert_eq!(columns(&db).last().map(String::as_str), Some("content"));
+
+        let first = db.get(1).unwrap().unwrap();
+        assert_eq!(first.content, "first clip");
+        assert_eq!(first.preview, "first");
+        assert!(first.is_pinned);
+        assert_eq!(first.source_app.as_deref(), Some("notepad.exe"));
+        assert_eq!(first.width, None);
+        let use_count: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT use_count FROM items WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(use_count, 3);
+
+        let listed = db.list(None, None, 50).unwrap();
+        assert_eq!(listed.iter().map(|i| i.id).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(db.search_clipboard("example", 10).unwrap().len(), 1);
+        assert_eq!(db.search_fts("\"exam\"*", 10).unwrap().len(), 1);
+        // dots and hyphens used to be FTS5 syntax errors
+        assert_eq!(db.search_clipboard("example.com", 10).unwrap().len(), 1);
+        assert!(db.search_clipboard("no-such-thing", 10).unwrap().is_empty());
+
+        // id 3 was used and deleted before the upgrade; it must not be handed out again
+        let next = db.insert("text", "after upgrade", "after").unwrap();
+        assert_eq!(next.id, 4);
+
+        // the ordering index exists and the redundant one is gone
+        let indexes: Vec<String> = {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT name FROM pragma_index_list('items')")
+                .unwrap();
+            let v = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            v
+        };
+        assert!(indexes.iter().any(|n| n == "idx_items_pinned_created"));
+        assert!(!indexes.iter().any(|n| n == "idx_items_pinned"));
+
+        // reopening is a no-op
+        drop(db);
+        let db = Database::open(path.clone()).unwrap();
+        assert_eq!(db.list(None, None, 50).unwrap().len(), 3);
+        drop(db);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

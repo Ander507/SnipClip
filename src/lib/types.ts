@@ -95,6 +95,36 @@ export interface AppSettings {
   uiPrefs: UiPrefs;
   /** KLIPY API key for the popup's GIF tab. Empty = use the key built into the release, if any. */
   klipyApiKey: string;
+  /** Instant replay: keep the last N seconds of the screen in a rolling buffer. */
+  replayEnabled: boolean;
+  /** Clip length in seconds (5–600). */
+  replaySeconds: number;
+  replayHotkey: string;
+  replayFps: number;
+  replayQuality: ReplayQuality;
+  replayResolution: ReplayResolution;
+  /** Include desktop audio. */
+  replayAudio: boolean;
+  /** Display index (0 = primary on most setups). */
+  replayMonitor: number;
+  /** Corner "Clip saved" toast that never takes focus. */
+  replayNotifyPopup: boolean;
+  /** Save chime (desktop audio capture records it into later clips). */
+  replayNotifySound: boolean;
+}
+
+export type ReplayQuality = "low" | "medium" | "high";
+export type ReplayResolution = "native" | "1080p" | "720p";
+
+export interface ReplayStatus {
+  enabled: boolean;
+  running: boolean;
+  saving: boolean;
+  seconds: number;
+  buffered: number;
+  encoder: string | null;
+  source: string | null;
+  error: string | null;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -132,6 +162,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
   uiScale: 100,
   uiPrefs: DEFAULT_UI_PREFS,
   klipyApiKey: "",
+  replayEnabled: false,
+  replaySeconds: 30,
+  replayHotkey: "Alt+F10",
+  replayFps: 60,
+  replayQuality: "medium",
+  replayResolution: "native",
+  replayAudio: true,
+  replayMonitor: 0,
+  replayNotifyPopup: true,
+  replayNotifySound: true,
 };
 
 export type ClearInterval = "never" | "reboot" | "daily" | "weekly";

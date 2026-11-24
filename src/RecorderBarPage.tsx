@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordControls, type RecordFormat } from "./components/RecordControls";
-import { finalizeRecording, recorderBarReady, type RecorderBarPayload } from "./lib/api";
+import {
+  finalizeRecording,
+  hideRecorderBar,
+  recorderBarReady,
+  type RecorderBarPayload,
+} from "./lib/api";
 import { useThemeSync } from "./lib/themeSync";
 
 export type { RecorderBarPayload };
@@ -61,28 +67,45 @@ export function RecorderBarPage() {
     width: number,
     height: number
   ) {
-    setPayload(null);
     try {
       await finalizeRecording(filePath, format, width, height);
+      setPayload(null);
     } catch (err) {
+      // The bar is already hidden at this point and the payload used to be cleared first, so
+      // this error was never shown anywhere. Bring the bar back to say what went wrong.
       console.error(err);
-      setError(String(err));
+      setError(`Recording was saved to ${filePath}, but adding it to the vault failed: ${String(err)}`);
+      await getCurrentWindow().show().catch(() => undefined);
     }
     // Do not closeSnipper here — snippers were already parked when the bar opened.
     // A late close after finalize was racing and killing the next snip overlay.
   }
 
-  if (!payload) {
+  if (!payload && !error) {
     return <div className="h-full w-full bg-transparent" />;
   }
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-transparent p-1">
       {error ? (
-        <div className="rounded-md border border-danger/40 bg-raised px-3 py-1.5 text-[11px] text-danger shadow-2xl">
-          {error}
+        <div className="flex max-w-full items-center gap-2 rounded-md border border-danger/40 bg-raised px-3 py-1.5 text-[11px] text-danger shadow-2xl">
+          <span className="min-w-0 truncate" title={error}>
+            {error}
+          </span>
+          {/* An error used to leave the bar stuck on screen with nothing to click. */}
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setPayload(null);
+              void hideRecorderBar().catch(() => undefined);
+            }}
+            className="shrink-0 rounded border border-line px-1.5 py-0.5 text-fg-secondary transition hover:bg-hover"
+          >
+            Close
+          </button>
         </div>
-      ) : (
+      ) : payload ? (
         <RecordControls
           key={session}
           region={payload.region}
@@ -93,7 +116,7 @@ export function RecorderBarPage() {
           onStopped={(path, fmt, w, h) => void handleStopped(path, fmt, w, h)}
           onError={(msg) => setError(msg)}
         />
-      )}
+      ) : null}
     </div>
   );
 }

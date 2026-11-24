@@ -33,7 +33,7 @@ const NAV: { id: Category; label: string; icon: IconType }[] = [
   { id: "text", label: "Text", icon: Type },
   { id: "images", label: "Images", icon: ImageIcon },
   { id: "screenshots", label: "Screenshots", icon: Aperture },
-  { id: "videos", label: "Videos", icon: Film },
+  { id: "videos", label: "Clips", icon: Film },
   { id: "math", label: "Math", icon: Calculator },
   { id: "links", label: "Links", icon: Link2 },
   { id: "pinned", label: "Pinned", icon: Pin },
@@ -114,11 +114,11 @@ export function Sidebar({
 
   const itemClass = (active: boolean, hoverAccent = false) =>
     clsx(
-      "flex w-full items-center rounded-md text-[13px] transition",
-      collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-2.5 py-2 text-left",
+      "relative flex h-8 w-full items-center rounded-md text-[13px] transition-colors",
+      collapsed ? "justify-center px-0" : "gap-2.5 px-2.5 text-left",
       active
-        ? "bg-hover text-fg"
-        : clsx("text-fg-muted hover:bg-muted", hoverAccent ? "hover:text-accent" : "hover:text-fg")
+        ? "bg-accent-soft font-medium text-fg"
+        : clsx("text-fg-muted hover:bg-hover", hoverAccent ? "hover:text-accent" : "hover:text-fg")
     );
 
   // Mirrored below when the sidebar sits on the right
@@ -127,7 +127,7 @@ export function Sidebar({
   return (
     <aside
       className={clsx(
-        "flex shrink-0 flex-col justify-between border-line bg-raised p-3 transition-[width]",
+        "flex shrink-0 flex-col justify-between border-line bg-raised p-2 transition-[width]",
         collapsed ? "w-[60px]" : "w-52",
         position === "left" ? "border-r" : "border-l"
       )}
@@ -159,9 +159,22 @@ export function Sidebar({
               onClick={() => onCategory(id)}
               title={collapsed ? `${label}${n > 0 ? ` · ${n}` : ""}` : undefined}
               aria-label={collapsed ? label : undefined}
-              className={clsx(itemClass(active), "relative")}
+              className={itemClass(active)}
             >
-              <Icon size={15} style={color ? { color } : undefined} />
+              {active && (
+                <span
+                  aria-hidden="true"
+                  className={clsx(
+                    "absolute inset-y-1.5 w-[3px] rounded-full bg-accent",
+                    position === "right" ? "right-0" : "left-0"
+                  )}
+                />
+              )}
+              <Icon
+                size={15}
+                className={active && !color ? "text-accent" : undefined}
+                style={color ? { color } : undefined}
+              />
               {!collapsed && <span>{label}</span>}
               {n > 0 &&
                 (collapsed ? (
@@ -171,8 +184,8 @@ export function Sidebar({
                 ) : (
                   <span
                     className={clsx(
-                      "ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
-                      active ? "bg-accent text-accent-fg" : "bg-muted text-fg-muted"
+                      "ml-auto text-[11px] tabular-nums",
+                      active ? "text-accent" : "text-fg-faint"
                     )}
                   >
                     {n}
@@ -183,19 +196,22 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="space-y-0.5 border-t border-line pt-3">
+      <div className="space-y-0.5 border-t border-line pt-2">
         <button
           type="button"
           onClick={onSnip}
           title={collapsed ? `Snip (${snipHotkeyLabel})` : undefined}
           aria-label={collapsed ? "Snip" : undefined}
-          className={itemClass(false)}
+          className={clsx(
+            "mb-1 flex h-9 items-center rounded-lg bg-accent text-[13px] font-semibold text-accent-fg transition hover:brightness-110",
+            collapsed ? "mx-auto w-9 justify-center" : "w-full gap-2.5 px-2.5 text-left"
+          )}
         >
           <Camera size={15} />
           {!collapsed && (
             <>
               <span>{snipDelayEnabled ? "Snip (delayed)" : "Snip"}</span>
-              <kbd className="ml-auto rounded bg-hover px-1.5 py-0.5 text-[9px] text-fg-muted">
+              <kbd className="ml-auto rounded bg-accent-fg/15 px-1.5 text-[10px]">
                 {snipHotkeyLabel}
               </kbd>
             </>

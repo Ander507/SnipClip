@@ -64,7 +64,7 @@
         "label": "recorder_bar",
         "title": "SnipClip Recorder",
         "url": "index.html?view=recorder",
-        "width": 360,
+        "width": 380,
         "height": 52,
         "decorations": false,
         "transparent": true,
@@ -109,13 +109,35 @@
         "visible": false,
         "focus": true,
         "backgroundColor": "#202020"
+      },
+      {
+        "label": "replay_toast",
+        "title": "SnipClip Replay",
+        "url": "index.html?view=replay-toast",
+        "width": 300,
+        "height": 64,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "focus": false,
+        "backgroundColor": "#00000000"
       }
     ],
     "security": {
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$PICTURES/**", "$HOME/Pictures/**", "$RESOURCE/**"]
+        "scope": [
+          "$PICTURES/**",
+          "$HOME/Pictures/**",
+          "$VIDEO/**",
+          "$HOME/Videos/**",
+          "$RESOURCE/**"
+        ]
       }
     }
   },

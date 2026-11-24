@@ -130,6 +130,7 @@ function estimateItemHeight(item: ClipboardItem, m: RowMetrics): number {
     lead = m.thumbH;
     content = TEXT_LINE_PX;
   } else if (isVideoItem(item)) {
+    lead = m.thumbH;
     content = TEXT_LINE_PX;
   } else if (item.contentType === "math") {
     content = MATH_BODY_PX;

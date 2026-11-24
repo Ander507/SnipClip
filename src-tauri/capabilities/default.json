@@ -9,7 +9,8 @@
     "screenshot_popup",
     "recorder_bar",
     "command_palette",
-    "video_editor"
+    "video_editor",
+    "replay_toast"
   ],
   "permissions": [
     "core:default",

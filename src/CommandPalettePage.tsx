@@ -409,7 +409,7 @@ export function CommandPalette() {
       return;
     }
     // Alt+1..9 fires the Nth clip straight into the app you came from
-    if (e.altKey && /^Digit[1-9]$/.test(e.code)) {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
       const index = Number(e.code.slice(5)) - 1;
       if (results[index]) {
         e.preventDefault();
@@ -417,7 +417,7 @@ export function CommandPalette() {
       }
       return;
     }
-    if (e.ctrlKey && e.code === "Space") {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.code === "Space") {
       e.preventDefault();
       if (current) togglePick(current.id);
       return;
@@ -437,9 +437,14 @@ export function CommandPalette() {
       setSelected((i) => Math.max(i - 1, 0));
       return;
     }
-    if ((e.key === "p" || e.key === "P") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === "p" || e.key === "P") {
+      // Plain P pins when the search box is not focused (same as the main window); Ctrl+P pins
+      // from anywhere, including while typing a query.
+      const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+      const ctrlOnly = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+      if (ctrlOnly) e.preventDefault(); // never open the webview print dialog
       const item = results[selected];
-      if (item && document.activeElement !== inputRef.current) {
+      if (item && ((plain && document.activeElement !== inputRef.current) || ctrlOnly)) {
         e.preventDefault();
         void togglePin(item.id).then(() => runSearch(query)).catch(console.error);
         return;

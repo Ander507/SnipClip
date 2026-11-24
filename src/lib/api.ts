@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, CaptureResult, ClipboardItem } from "./types";
+import type { AppSettings, CaptureResult, ClipboardItem, ReplayStatus } from "./types";
 
 export function listItems(
   category?: string,
@@ -118,8 +118,14 @@ export function togglePin(id: number): Promise<boolean> {
   return invoke("toggle_pin", { id });
 }
 
+/** Removes the library entry only; a clip's file stays on disk. */
 export function deleteItem(id: number): Promise<void> {
   return invoke("delete_item", { id });
+}
+
+/** Moves a clip/GIF file to the Recycle Bin and removes its entry. Resolves to the file name. */
+export function deleteItemFile(id: number): Promise<string> {
+  return invoke("delete_item_file", { id });
 }
 
 export function clearHistory(): Promise<void> {
@@ -559,4 +565,13 @@ export function formatHotkeyLabel(accel: string): string {
     .replace(/CommandOrControl/gi, "Ctrl")
     .replace(/Control/gi, "Ctrl")
     .replace(/\s*\+\s*/g, "+");
+}
+
+export function replayStatus(): Promise<ReplayStatus> {
+  return invoke("replay_status");
+}
+
+/** Saves the last N seconds of the replay buffer as an mp4 and adds it to the vault. */
+export function saveReplayClip(): Promise<ClipboardItem> {
+  return invoke("save_replay_clip");
 }

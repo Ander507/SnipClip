@@ -14,7 +14,7 @@ function range(from: number, to: number, skip: number[] = []): string[] {
 
 const chars = (s: string) => Array.from(s.replace(/\s+/g, ""));
 
-export const SYMBOL_GROUPS: { id: string; label: string; items: string[] }[] = [
+const RAW_GROUPS: { id: string; label: string; items: string[] }[] = [
   {
     id: "popular",
     label: "Popular",
@@ -55,3 +55,9 @@ export const SYMBOL_GROUPS: { id: string; label: string; items: string[] }[] = [
   { id: "box", label: "Box drawing", items: [...range(0x2500, 0x257f), ...range(0x2580, 0x259f)] },
   { id: "misc", label: "Misc", items: [...range(0x2600, 0x266f), ...range(0x2700, 0x27bf)] },
 ];
+
+/**
+ * Each group's items are de-duplicated: the picker keys cells by `group:char`, so a
+ * character listed twice in one group (punctuation had ‚ „ ‹ ›) gave duplicate React keys.
+ */
+export const SYMBOL_GROUPS = RAW_GROUPS.map((g) => ({ ...g, items: [...new Set(g.items)] }));

@@ -1,17 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { emit, listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/TitleBar";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, LIBRARY_TABS } from "./components/Sidebar";
 import { SearchBar } from "./components/SearchBar";
 import { ClipboardList } from "./components/ClipboardList";
+import { EmptyState } from "./components/EmptyState";
+import { MediaViewer } from "./components/media/MediaViewer";
+import { isImageItem, isVideoItem } from "./components/itemParts";
 import { SnipOverlay } from "./components/SnipOverlay";
 import { SettingsView } from "./components/SettingsView";
-import { ImageViewerModal } from "./components/ImageViewerModal";
 import {
   clearHistory,
   copyItem,
   copyText,
   deleteItem,
+  deleteItemFile,
   listItems,
   togglePin,
   openUrl,
@@ -31,8 +36,24 @@ import {
   pasteItem,
   updateSettings,
   isOcrAvailable,
+  beginRecord,
+  saveReplayClip,
 } from "./lib/api";
-import { AlertCircle, CheckCircle2, Info } from "lucide-react";
+import {
+  AlertCircle,
+  Aperture,
+  CheckCircle2,
+  Film,
+  Image as ImageIcon,
+  Inbox,
+  Info,
+  LayoutGrid,
+  Pin,
+  Rewind,
+  Rows3,
+  SearchX,
+  Video,
+} from "lucide-react";
 import clsx from "clsx";
 import type { AppSettings, CaptureResult, Category, ClipboardItem } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/types";
@@ -45,6 +66,7 @@ import {
 import { normalizeAppSettings } from "./lib/settings";
 import type { UiPrefs } from "./lib/uiPrefs";
 import { forgetThumbnails } from "./lib/thumbnails";
+import type { ImageView } from "./lib/uiPrefs";
 import { itemMatchesCategory, itemMatchesSearch } from "./lib/search";
 import { useStatusToast } from "./lib/useStatusToast";
 import { parseTranslatedContent } from "./lib/translatedContent";
@@ -54,6 +76,17 @@ import {
   applyStudioLayout,
   setMainAlwaysOnTop,
 } from "./lib/compactDock";
+
+function Hint({ k, children }: { k: string; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-1">
+      <kbd className="rounded border border-line bg-muted px-1 font-mono text-[10px] text-fg-muted">
+        {k}
+      </kbd>
+      {children}
+    </span>
+  );
+}
 
 interface ScreenshotEditorRequest {
   vaultId: number;
@@ -71,9 +104,11 @@ function App() {
   const [status, setStatus] = useStatusToast();
   const [view, setView] = useState<"vault" | "settings">("vault");
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
-  const [previewId, setPreviewId] = useState<number | null>(null);
-  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  // Media Viewer: the open item's id (null = closed)
+  const [viewerId, setViewerId] = useState<number | null>(null);
+  // A freshly saved replay the user asked to watch; opens once it is in the list
+  const [watchId, setWatchId] = useState<number | null>(null);
+  const [savingClip, setSavingClip] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [clipboardPaused, setClipboardPaused] = useState(false);
   const [vaultLocked, setVaultLocked] = useState(false);
@@ -92,6 +127,9 @@ function App() {
   const debouncedQueryRef = useRef(debouncedQuery);
   debouncedQueryRef.current = debouncedQuery;
   const searchRef = useRef<HTMLInputElement>(null);
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const lastRefreshQueryRef = useRef(debouncedQuery);
   const selectedIdRef = useRef<number | null>(null);
   selectedIdRef.current = selectedId;
 
@@ -108,8 +146,11 @@ function App() {
       if (seq !== refreshSeqRef.current) return;
       const data = (raw ?? []).filter((i) => i.id !== pendingId);
       setItems(Array.isArray(data) ? data : []);
+      // A new search starts on its top hit, so "type, Enter" copies what you see first
+      const queryChanged = lastRefreshQueryRef.current !== debouncedQuery;
+      lastRefreshQueryRef.current = debouncedQuery;
       setSelectedId((prev) => {
-        if (prev && data.some((i) => i.id === prev)) return prev;
+        if (!queryChanged && prev && data.some((i) => i.id === prev)) return prev;
         return data[0]?.id ?? null;
       });
     } catch (err) {
@@ -232,12 +273,14 @@ function App() {
 
     // The popup's GIF tab links here when no KLIPY key is set
     void listen<{ section?: string }>("open-settings", (event) => {
+      setViewerId(null);
       setSettingsSection(event.payload?.section ?? null);
       setView("settings");
       void showMainWindow();
     }).then(keep);
 
     void listen("focus-search", () => {
+      setViewerId(null);
       setView("vault");
       searchRef.current?.focus();
       searchRef.current?.select();
@@ -290,6 +333,31 @@ function App() {
       setStatus(`Hotkey conflict: ${msg}`, 6000, { tone: "error" });
     }).then(keep);
 
+    void listen<{ seconds?: number; vaultId?: number }>("replay-saved", (event) => {
+      const secs = event.payload?.seconds;
+      const vaultId = event.payload?.vaultId;
+      setStatus(secs ? `Replay saved (last ${secs}s)` : "Replay saved", 4500, {
+        action:
+          vaultId != null
+            ? {
+                label: "Watch",
+                onClick: () => {
+                  setStatus(null);
+                  setQuery("");
+                  setView("vault");
+                  setCategory("videos");
+                  setWatchId(vaultId);
+                },
+              }
+            : undefined,
+      });
+    }).then(keep);
+
+    void listen<{ message?: string }>("replay-error", (event) => {
+      const msg = event.payload?.message?.trim() || "Could not save the replay";
+      setStatus(msg, 5000, { tone: "error" });
+    }).then(keep);
+
     void listen<{ path?: string }>("vault-imported", (event) => {
       const p = event.payload?.path ? ` from ${event.payload.path}` : "";
       setStatus(`Vault staged for restore${p}. Restart SnipClip to apply.`, 6000);
@@ -314,6 +382,7 @@ function App() {
       if (!payload) return;
       void (async () => {
         await showMainWindow();
+        setViewerId(null);
         setView("vault");
         setStatus("Loading editor…", 1200);
         await new Promise((r) => setTimeout(r, 50));
@@ -535,14 +604,42 @@ function App() {
   const gridView =
     !settings.compactDock &&
     ui.imageView === "grid" &&
-    (category === "images" || category === "screenshots");
+    (category === "images" || category === "screenshots" || category === "videos");
+  const mediaTab =
+    !settings.compactDock &&
+    (category === "images" || category === "screenshots" || category === "videos");
 
-  const dockItems = settings.compactDock
-    ? [
-        ...items.filter((i) => i.isPinned),
-        ...items.filter((i) => !i.isPinned).slice(0, 10),
-      ]
-    : items;
+  const dockItems = useMemo(
+    () =>
+      settings.compactDock
+        ? [
+            ...items.filter((i) => i.isPinned),
+            ...items.filter((i) => !i.isPinned).slice(0, 10),
+          ]
+        : items,
+    [items, settings.compactDock]
+  );
+
+  // What the Media Viewer steps through: the media on screen, in list order
+  const mediaItems = useMemo(
+    () => dockItems.filter((i) => isImageItem(i) || isVideoItem(i)),
+    [dockItems]
+  );
+
+  function openViewer(id: number) {
+    setSelectedId(id);
+    setViewerId(id);
+  }
+
+  // "Watch" on the replay toast: open that clip once it has reached the list
+  useEffect(() => {
+    if (watchId == null) return;
+    if (items.some((i) => i.id === watchId)) {
+      openViewer(watchId);
+      setWatchId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchId, items]);
 
   async function handlePin(id: number) {
     try {
@@ -575,15 +672,23 @@ function App() {
 
   function handleDelete(id: number) {
     commitPendingDelete();
-    if (previewId === id) closeImagePreview();
     const list = settings.compactDock ? dockItems : items;
     const idx = list.findIndex((i) => i.id === id);
-    const neighbor = list[idx + 1] ?? list[idx - 1] ?? null;
+    let neighbor = list[idx + 1] ?? list[idx - 1] ?? null;
+    if (viewerId === id) {
+      // The viewer moves on to the next media item (else the previous one, else closes)
+      const mi = mediaItems.findIndex((i) => i.id === id);
+      const nextMedia = mediaItems[mi + 1] ?? mediaItems[mi - 1] ?? null;
+      setViewerId(nextMedia?.id ?? null);
+      if (nextMedia) neighbor = nextMedia;
+    }
     setItems((prev) => prev.filter((i) => i.id !== id));
     setSelectedId((cur) => (cur === id ? neighbor?.id ?? null : cur));
     const timer = window.setTimeout(commitPendingDelete, 5000);
     pendingDeleteRef.current = { id, timer };
-    setStatus("Deleted", 5000, {
+    const removed = list[idx];
+    const keepsFile = removed?.contentType === "video" || removed?.contentType === "gif";
+    setStatus(keepsFile ? "Removed from library · file kept" : "Deleted", 5000, {
       action: {
         label: "Undo",
         onClick: () => {
@@ -597,6 +702,47 @@ function App() {
       },
     });
   }
+
+  /** Clips/GIFs only: move the file to the Recycle Bin and drop the entry (after confirming). */
+  async function handleDeleteFile(id: number) {
+    const list = settings.compactDock ? dockItems : items;
+    const item = list.find((i) => i.id === id) ?? mediaItems.find((i) => i.id === id);
+    if (!item || (item.contentType !== "video" && item.contentType !== "gif")) {
+      handleDelete(id);
+      return;
+    }
+    const name = item.content.split(/[\/]/).pop() ?? "this file";
+    const ok = await ask(
+      `Move "${name}" to the Recycle Bin and remove it from SnipClip?
+
+You can restore it from the Recycle Bin.`,
+      { title: "Delete file", kind: "warning", okLabel: "Delete file", cancelLabel: "Cancel" }
+    );
+    if (!ok) return;
+    commitPendingDelete();
+    // Unmount any <video> showing this file first, or WebView2 keeps it locked.
+    if (viewerId === id) {
+      const mi = mediaItems.findIndex((i) => i.id === id);
+      const next = mediaItems[mi + 1] ?? mediaItems[mi - 1] ?? null;
+      setViewerId(next?.id ?? null);
+    }
+    const idx = list.findIndex((i) => i.id === id);
+    const neighbor = list[idx + 1] ?? list[idx - 1] ?? null;
+    setItems((prev) => prev.filter((i) => i.id !== id));
+    setSelectedId((cur) => (cur === id ? neighbor?.id ?? null : cur));
+    await new Promise((r) => window.setTimeout(r, 200));
+    try {
+      const fileName = await deleteItemFile(id);
+      setStatus(`Moved ${fileName} to the Recycle Bin`, 3200);
+      void refreshCounts();
+    } catch (err) {
+      setStatus(String(err), 3200, { tone: "error" });
+      void refreshRef.current();
+    }
+  }
+
+  const handleDeleteFileRef = useRef(handleDeleteFile);
+  handleDeleteFileRef.current = handleDeleteFile;
 
   async function handleOpenLink(url: string) {
     try {
@@ -639,7 +785,7 @@ function App() {
   async function handleClear() {
     try {
       commitPendingDelete();
-      closeImagePreview();
+      setViewerId(null);
       setCapture(null);
       setQuery("");
       setItems([]);
@@ -663,33 +809,8 @@ function App() {
     }
   }
 
-  async function openImagePreview(id: number) {
-    setPreviewId(id);
-    setPreviewLoading(true);
-    setPreviewSrc(null);
-    try {
-      const full = await getItem(id);
-      if (full?.content?.startsWith("data:image")) {
-        setPreviewSrc(full.content);
-      } else if (full?.preview?.startsWith("data:image")) {
-        setPreviewSrc(full.preview);
-      }
-    } catch (err) {
-      setStatus(String(err), 2400, { tone: "error" });
-      setPreviewId(null);
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
-
-  function closeImagePreview() {
-    setPreviewId(null);
-    setPreviewSrc(null);
-    setPreviewLoading(false);
-  }
-
   /** Open the annotation editor with an existing vault image (not a fresh snip). */
-  async function handleEditImage(imageSrc: string) {
+  async function handleEditImage(id: number, imageSrc: string) {
     try {
       const size = await new Promise<{ width: number; height: number }>((resolve, reject) => {
         const img = new Image();
@@ -698,16 +819,132 @@ function App() {
         img.onerror = () => reject(new Error("Failed to load image for editing"));
         img.src = imageSrc;
       });
-      closeImagePreview();
+      setViewerId(null);
       setCapture({
         dataUrl: imageSrc,
         width: size.width,
         height: size.height,
         monitorName: "vault",
-        vaultId: previewId ?? undefined,
+        vaultId: id,
       });
     } catch (err) {
       setStatus(String(err), 2400, { tone: "error" });
+    }
+  }
+
+  function setImageView(imageView: ImageView) {
+    // Settings may be previewing prefs: keep that preview in step with the toggle
+    setUiPreview((prev) => (prev ? { ...prev, imageView } : prev));
+    void persistWindowPrefs({ uiPrefs: { ...settings.uiPrefs, imageView } });
+  }
+
+  async function startRecord() {
+    try {
+      await beginRecord();
+    } catch (err) {
+      setStatus(`Record failed: ${err}`, 2400, { tone: "error" });
+    }
+  }
+
+  async function saveClip() {
+    if (savingClip) return;
+    setSavingClip(true);
+    try {
+      await saveReplayClip();
+    } catch (err) {
+      setStatus(String(err), 5000, { tone: "error" });
+    } finally {
+      setSavingClip(false);
+    }
+  }
+
+  function openSettings() {
+    setSettingsSection(null);
+    setView("settings");
+  }
+
+  /** Per-context empty state; every one offers a next step. */
+  function renderEmpty() {
+    const q = debouncedQuery.trim();
+    if (q) {
+      return (
+        <EmptyState
+          icon={<SearchX size={22} />}
+          title={`No matches for \u201C${q}\u201D`}
+          body="Try fewer or different words."
+          action={{
+            label: "Clear search",
+            onClick: () => {
+              setQuery("");
+              setDebouncedQuery("");
+              searchRef.current?.focus();
+            },
+          }}
+          secondary={
+            category !== "all"
+              ? { label: "Search all tabs", onClick: () => setCategory("all") }
+              : undefined
+          }
+        />
+      );
+    }
+    const snipKey = formatHotkeyShort(settings.hotkeySnip);
+    switch (category) {
+      case "videos": {
+        const recordKey = formatHotkeyShort(settings.hotkeyRecord);
+        const replayKey = formatHotkeyShort(settings.replayHotkey);
+        return (
+          <EmptyState
+            icon={<Film size={22} />}
+            title="No clips yet"
+            body={
+              settings.replayEnabled
+                ? `Press ${recordKey} to record your screen, or ${replayKey} to save the last ${settings.replaySeconds} seconds.`
+                : `Press ${recordKey} to record your screen.`
+            }
+            action={{ label: "Record", onClick: () => void startRecord() }}
+            secondary={
+              settings.replayEnabled
+                ? { label: `Clip last ${settings.replaySeconds}s`, onClick: () => void saveClip() }
+                : { label: "Open settings", onClick: openSettings }
+            }
+          />
+        );
+      }
+      case "screenshots":
+        return (
+          <EmptyState
+            icon={<Aperture size={22} />}
+            title="No screenshots yet"
+            body={`Snip any part of your screen with ${snipKey}.`}
+            action={{ label: "Snip", onClick: () => void startSnip() }}
+          />
+        );
+      case "images":
+        return (
+          <EmptyState
+            icon={<ImageIcon size={22} />}
+            title="Copied images land here"
+            body="Copy an image anywhere and it shows up in this tab."
+          />
+        );
+      case "pinned":
+        return (
+          <EmptyState
+            icon={<Pin size={22} />}
+            title="Nothing pinned"
+            body="Press P on any item to keep it on top."
+          />
+        );
+      default:
+        return (
+          <EmptyState
+            icon={<Inbox size={22} />}
+            title="Your library is empty"
+            body={`Copy anything (text, links or images) and it shows up here automatically. Alt+C opens quick paste, ${snipKey} snips a region.`}
+            action={{ label: "Snip", onClick: () => void startSnip() }}
+          />
+        );
     }
   }
 
@@ -721,9 +958,21 @@ function App() {
     }
 
     function onKey(e: KeyboardEvent) {
-      if (capture || view === "settings") return;
+      if (capture || view === "settings" || viewerId != null) return;
       const tag = (e.target as HTMLElement)?.tagName;
       const inInput = tag === "INPUT" || tag === "TEXTAREA";
+      // A focused button/link/select owns Enter, Space, Delete, P and digits (Tab + Enter must
+      // press it, not copy the selected item).
+      const tgt = e.target as HTMLElement | null;
+      const onControl =
+        tag === "BUTTON" || tag === "SELECT" || tag === "A" || tgt?.getAttribute?.("role") === "button";
+      // Plain keys only: Ctrl/Alt/Meta combos belong to the OS or other shortcuts.
+      const noMod = !e.ctrlKey && !e.altKey && !e.metaKey;
+      // Enter keeps its Ctrl/Meta meaning (paste); Alt+Enter is not ours.
+      const enterOk = !onControl && !e.altKey;
+      const plainOk = !onControl && noMod;
+      // Enter in the search field acts on the top hit, so "type, Enter" copies it
+      const inSearch = e.target === searchRef.current;
 
       if (e.key === "/" && !inInput) {
         e.preventDefault();
@@ -731,7 +980,13 @@ function App() {
         return;
       }
 
-      if (inInput && e.key !== "Escape" && e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+      if (
+        inInput &&
+        e.key !== "Escape" &&
+        e.key !== "ArrowDown" &&
+        e.key !== "ArrowUp" &&
+        !(e.key === "Enter" && inSearch && !e.isComposing)
+      ) {
         return;
       }
 
@@ -764,9 +1019,18 @@ function App() {
         });
       }
 
-      if (e.key === "Enter" && selectedIdRef.current != null) {
+      let enterId = selectedIdRef.current;
+      if (e.key === "Enter" && enterOk && inSearch && queryRef.current !== debouncedQueryRef.current) {
+        // Typed faster than the search debounce: take the first loaded item that matches
+        const hit = navItems().find((i) => itemMatchesSearch(i, queryRef.current));
+        if (hit) {
+          enterId = hit.id;
+          setSelectedId(hit.id);
+        }
+      }
+      if (e.key === "Enter" && enterOk && enterId != null) {
         e.preventDefault();
-        const id = selectedIdRef.current;
+        const id = enterId;
         const canPaste = settings.directPasteEnabled;
         if (e.shiftKey) {
           if (canPaste) void handlePaste(id, "typeOut");
@@ -788,34 +1052,33 @@ function App() {
         }
       }
 
-      // Space previews like Quick Look — images open the viewer, recordings the editor
-      if (e.key === " " && !inInput && selectedIdRef.current != null) {
+      // Space previews like Quick Look: images and clips open the Media Viewer
+      if (e.key === " " && plainOk && !inInput && selectedIdRef.current != null) {
         const item = navItems().find((i) => i.id === selectedIdRef.current);
-        if (item?.contentType === "image" || item?.contentType === "screenshot") {
+        if (item && (isImageItem(item) || isVideoItem(item))) {
           e.preventDefault();
-          void openImagePreview(item.id);
-        } else if (item?.contentType === "video" || item?.contentType === "gif") {
-          e.preventDefault();
-          void handleEditVideo(item.id);
+          openViewer(item.id);
         }
       }
 
       if (
         (e.key === "Delete" || e.key === "Backspace") &&
+        plainOk &&
         !inInput &&
         selectedIdRef.current != null
       ) {
         e.preventDefault();
-        handleDelete(selectedIdRef.current);
+        if (e.shiftKey && e.key === "Delete") void handleDeleteFileRef.current(selectedIdRef.current);
+        else handleDelete(selectedIdRef.current);
       }
 
-      if (e.key === "p" && !inInput && selectedIdRef.current != null) {
+      if ((e.key === "p" || e.key === "P") && plainOk && !inInput && selectedIdRef.current != null) {
         e.preventDefault();
         void handlePin(selectedIdRef.current);
       }
 
       // Digit keys jump to the Nth visible library tab
-      if (!inInput && /^[1-9]$/.test(e.key)) {
+      if (plainOk && !inInput && /^[1-9]$/.test(e.key)) {
         const n = Number(e.key);
         const visibleTabs =
           settings.sidebarTabs.length > 0
@@ -836,6 +1099,7 @@ function App() {
     items,
     capture,
     view,
+    viewerId,
     counts,
     gridView,
     settings.sidebarTabs,
@@ -909,20 +1173,104 @@ function App() {
           ) : (
             <>
               <div className="border-b border-line px-4 py-3">
-                <SearchBar ref={searchRef} value={query} onChange={setQuery} />
-                <p className="mt-2 text-[11px] text-fg-faint">
-                  {settings.compactDock
-                    ? settings.directPasteEnabled
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <SearchBar ref={searchRef} value={query} onChange={setQuery} />
+                  </div>
+                  {mediaTab && (
+                    <div
+                      role="group"
+                      aria-label="Layout"
+                      className="flex shrink-0 items-center gap-0.5 rounded-lg border border-line bg-inset p-0.5"
+                    >
+                      {(
+                        [
+                          { id: "grid", label: "Grid view", icon: <LayoutGrid size={15} /> },
+                          { id: "list", label: "List view", icon: <Rows3 size={15} /> },
+                        ] as { id: ImageView; label: string; icon: ReactNode }[]
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          title={opt.label}
+                          aria-label={opt.label}
+                          aria-pressed={ui.imageView === opt.id}
+                          onClick={() => setImageView(opt.id)}
+                          className={clsx(
+                            "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+                            ui.imageView === opt.id
+                              ? "bg-raised text-fg shadow-sm"
+                              : "text-fg-muted hover:text-fg"
+                          )}
+                        >
+                          {opt.icon}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!settings.compactDock && (
+                    <>
+                      <button
+                        type="button"
+                        title={`Record a clip (${formatHotkeyShort(settings.hotkeyRecord)})`}
+                        onClick={() => void startRecord()}
+                        className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] text-fg-secondary transition-colors hover:bg-hover"
+                      >
+                        <Video size={15} />
+                        <span className="hidden min-[900px]:inline">Record</span>
+                      </button>
+                      {settings.replayEnabled && (
+                        <button
+                          type="button"
+                          disabled={savingClip}
+                          title={`Save the last ${settings.replaySeconds}s (${formatHotkeyShort(settings.replayHotkey)})`}
+                          onClick={() => void saveClip()}
+                          className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] text-fg-secondary transition-colors hover:bg-hover disabled:opacity-40"
+                        >
+                          <Rewind size={15} />
+                          <span className="hidden min-[900px]:inline">
+                            Clip last {settings.replaySeconds}s
+                          </span>
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+                {settings.compactDock ? (
+                  <p className="mt-2 text-[11px] text-fg-faint">
+                    {settings.directPasteEnabled
                       ? "Pins + last 10 · Enter paste · Shift+Enter type · Ctrl+Enter copy"
-                      : "Pins + last 10 · Enter copy · enable Direct paste in Settings"
-                    : settings.directPasteEnabled
-                      ? `↑↓ navigate · Enter copy · Ctrl+Enter paste · Space preview · ${formatHotkeyShort(settings.hotkeyClipboard)} toggle${
-                          clipboardPaused ? " · listening paused" : ""
-                        } · 1–9 switch tab`
-                      : `↑↓ navigate · Enter copy · Space preview · ${formatHotkeyShort(settings.hotkeyClipboard)} toggle${
-                          clipboardPaused ? " · listening paused" : ""
-                        } · 1–9 switch tab`}
-                </p>
+                      : "Pins + last 10 · Enter copy · enable Direct paste in Settings"}
+                  </p>
+                ) : (
+                  <div className="mt-2 flex h-5 items-center justify-between">
+                    <span className="text-[12px] font-medium text-fg-secondary">
+                      {LIBRARY_TABS.find((t) => t.id === category)?.label ?? "All"}{" "}
+                      <span className="tabular-nums text-fg-faint">
+                        {debouncedQuery.trim()
+                          ? dockItems.length
+                          : counts[category] ?? dockItems.length}
+                      </span>
+                    </span>
+                    <div className="hidden items-center gap-3 text-[11px] text-fg-faint min-[820px]:flex">
+                      {mediaTab ? (
+                        <>
+                          <Hint k="Space">view</Hint>
+                          <Hint k="Enter">copy</Hint>
+                          <Hint k="Del">delete</Hint>
+                        </>
+                      ) : (
+                        <>
+                          <Hint k="Enter">copy</Hint>
+                          {settings.directPasteEnabled && <Hint k="Ctrl+Enter">paste</Hint>}
+                          <Hint k="P">pin</Hint>
+                          <Hint k="Del">delete</Hint>
+                        </>
+                      )}
+                      {clipboardPaused && <span>listening paused</span>}
+                    </div>
+                  </div>
+                )}
                 {settings.compactDock && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <button
@@ -949,6 +1297,9 @@ function App() {
                   </div>
                 )}
               </div>
+              {dockItems.length === 0 ? (
+                renderEmpty()
+              ) : (
               <ClipboardList
                 items={dockItems}
                 selectedId={selectedId}
@@ -970,11 +1321,12 @@ function App() {
                 onExtractText={(id) => void handleExtractText(id)}
                 onPin={(id) => void handlePin(id)}
                 onDelete={handleDelete}
-                onPreviewImage={(id) => void openImagePreview(id)}
+                onPreviewImage={openViewer}
                 onEditVideo={(id) => void handleEditVideo(id)}
                 onOpenLink={(url) => void handleOpenLink(url)}
                 onUpdate={(id, content) => void handleUpdateItem(id, content)}
               />
+              )}
             </>
           )}
         </main>
@@ -984,7 +1336,8 @@ function App() {
         <div
           role="status"
           className={clsx(
-            "absolute bottom-4 left-1/2 z-[200] flex max-w-[min(90vw,28rem)] -translate-x-1/2 items-center gap-2 rounded-lg border bg-raised py-2 pl-3 text-[12px] text-fg shadow-lg",
+            viewerId != null ? "bottom-24" : "bottom-4",
+            "absolute left-1/2 z-[200] flex max-w-[min(90vw,28rem)] -translate-x-1/2 items-center gap-2 rounded-lg border bg-raised py-2 pl-3 text-[12px] text-fg shadow-lg",
             status.action ? "pointer-events-auto pr-1.5" : "pointer-events-none pr-3.5",
             status.tone === "error" ? "border-danger/40" : "border-line"
           )}
@@ -1009,18 +1362,26 @@ function App() {
         </div>
       )}
 
-      <ImageViewerModal
-        imageSrc={previewSrc}
-        loading={previewLoading}
-        onClose={closeImagePreview}
-        onCopy={async () => {
-          if (previewId != null) await handleCopy(previewId);
-        }}
-        onExtractText={() => {
-          if (previewId != null) void handleExtractText(previewId);
-        }}
-        onEdit={(src) => void handleEditImage(src)}
-      />
+      {viewerId != null && (
+        <MediaViewer
+          items={mediaItems}
+          activeId={viewerId}
+          ocrAvailable={ocrAvailable}
+          onNavigate={(id) => {
+            setViewerId(id);
+            setSelectedId(id);
+          }}
+          onClose={() => setViewerId(null)}
+          onCopy={handleCopy}
+          onPin={(id) => void handlePin(id)}
+          onDelete={handleDelete}
+          onDeleteFile={(id) => void handleDeleteFile(id)}
+          onExtractText={handleExtractText}
+          onEditImage={(id, src) => void handleEditImage(id, src)}
+          onEditVideo={(id) => void handleEditVideo(id)}
+          onError={(m) => setStatus(m, 2400, { tone: "error" })}
+        />
+      )}
 
       {capture && (
         <SnipOverlay

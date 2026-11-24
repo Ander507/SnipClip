@@ -13,6 +13,33 @@ export function isVideoItem(item: Pick<ClipboardItem, "contentType">): boolean {
   return item.contentType === "video" || item.contentType === "gif";
 }
 
+/** `0:07` / `1:02:03`. */
+export function formatDuration(sec: number): string {
+  const total = Math.max(0, Math.round(sec));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+function baseName(path: string | null | undefined): string {
+  return (path || "").replace(/\\/g, "/").split("/").pop() ?? "";
+}
+
+/** `GIF`, `Replay` (saved replay buffer) or `Recording`. */
+export function videoKindLabel(item: Pick<ClipboardItem, "contentType" | "content">): string {
+  if (item.contentType === "gif") return "GIF";
+  const name = baseName(item.content);
+  return name.startsWith("SnipClip Replay") ? "Replay" : "Recording";
+}
+
+/** File name of a video item's path. */
+export function videoFileName(item: Pick<ClipboardItem, "content" | "preview">): string {
+  const name = baseName(item.content);
+  return name || (item.preview || "").replace(/^video:\s*/, "");
+}
+
 /** The stored 64 px preview, shown until the crisp thumbnail arrives. */
 export function imageFallback(item: ClipboardItem): string | null {
   if (!isImageItem(item)) return null;
@@ -178,7 +205,7 @@ export function ActionButton({
   onClick,
   tone = "accent",
   active = false,
-  small = false,
+  small: _small = false,
   children,
 }: {
   title: string;
@@ -197,8 +224,8 @@ export function ActionButton({
       title={title}
       aria-label={title}
       className={clsx(
-        "rounded transition hover:bg-hover",
-        small ? "p-1" : "p-1.5",
+        "flex items-center justify-center rounded transition hover:bg-hover",
+        "h-7 w-7",
         active
           ? "text-accent"
           : clsx(

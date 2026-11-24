@@ -59,7 +59,7 @@ fn capture_windows_audio(
     use std::collections::VecDeque;
     use std::fs::File;
     use std::io::Write;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use wasapi::{initialize_mta, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
 
     let start_result = (|| -> Result<_, String> {
@@ -99,6 +99,15 @@ fn capture_windows_audio(
         }
     };
 
+    // Loopback delivers no packets while nothing is playing. Written back to back, the sound
+    // after a quiet stretch would land early and run ahead of the picture, so the stream is
+    // kept on the wall clock: one frame per 1/48000 s of un-paused time, gaps filled with zeros.
+    const SAMPLE_RATE: u64 = 48_000;
+    const FRAME_BYTES: u64 = 8; // f32 stereo
+    let mut written: u64 = 0; // frames
+    let mut active = Duration::ZERO;
+    let mut last_tick = Instant::now();
+
     let mut samples = VecDeque::new();
     while !stop.load(Ordering::SeqCst) {
         while capture_client
@@ -112,13 +121,30 @@ fn capture_windows_audio(
                 .map_err(|e| e.to_string())?;
         }
 
+        let now = Instant::now();
+        let tick = now - last_tick;
+        last_tick = now;
         if paused.load(Ordering::SeqCst) {
             samples.clear();
-        } else if !samples.is_empty() {
-            output
-                .write_all(samples.make_contiguous())
-                .map_err(|e| e.to_string())?;
-            samples.clear();
+        } else {
+            active += tick;
+            let expected = active.as_micros() as u64 * SAMPLE_RATE / 1_000_000;
+            let got = samples.len() as u64 / FRAME_BYTES;
+            // more than 30 ms behind: pad up to 20 ms short, leaving room for late packets
+            if written + got + SAMPLE_RATE * 3 / 100 < expected {
+                let pad = expected - SAMPLE_RATE / 50 - (written + got);
+                output
+                    .write_all(&vec![0u8; (pad * FRAME_BYTES) as usize])
+                    .map_err(|e| e.to_string())?;
+                written += pad;
+            }
+            if got > 0 {
+                output
+                    .write_all(samples.make_contiguous())
+                    .map_err(|e| e.to_string())?;
+                written += got;
+                samples.clear();
+            }
         }
         thread::sleep(Duration::from_millis(5));
     }

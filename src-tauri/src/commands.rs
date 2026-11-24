@@ -65,17 +65,21 @@ pub async fn item_thumbnail(
     let db = db.inner().clone();
     let max_size = max_size.clamp(32, 1024);
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
-        let Some(item) = db.get(id)? else {
+        // Type and size only: a cache hit must not pull the multi-MB image out of SQLite.
+        let Some((content_type, content_len)) = db.content_info(id)? else {
             return Ok(None);
         };
-        if item.content_type != "image" && item.content_type != "screenshot" {
+        if content_type != "image" && content_type != "screenshot" {
             return Ok(None);
         }
-        let key = (id, max_size, item.content.len());
+        let key = (id, max_size, content_len);
         let cache = THUMB_CACHE.get_or_init(Default::default);
         if let Some(hit) = cache.lock().map_err(|e| e.to_string())?.get(&key) {
             return Ok(Some(hit.clone()));
         }
+        let Some(item) = db.get(id)? else {
+            return Ok(None);
+        };
 
         let url = encode_thumbnail(&item.content, max_size)?;
         let mut map = cache.lock().map_err(|e| e.to_string())?;
@@ -326,6 +330,83 @@ pub fn toggle_pin(db: State<'_, Arc<Database>>, id: i64) -> Result<bool, String>
 #[tauri::command]
 pub fn delete_item(db: State<'_, Arc<Database>>, id: i64) -> Result<(), String> {
     db.delete(id)
+}
+
+/// "Delete file": moves a clip's file to the Recycle Bin (recoverable), then drops the
+/// library entry. Plain `delete_item` only removes the entry and keeps the file.
+#[tauri::command]
+pub async fn delete_item_file(
+    db: State<'_, Arc<Database>>,
+    id: i64,
+) -> Result<String, String> {
+    let item = db.get(id)?.ok_or_else(|| "item not found".to_string())?;
+    if !matches!(item.content_type.as_str(), "video" | "gif") {
+        return Err("only clips and GIFs have a file to delete".into());
+    }
+    let path = std::path::PathBuf::from(&item.content);
+    if path.is_file() {
+        let p = path.clone();
+        tauri::async_runtime::spawn_blocking(move || move_to_recycle_bin(&p))
+            .await
+            .map_err(|e| e.to_string())??;
+    }
+    db.delete(id)?;
+    Ok(path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file")
+        .to_string())
+}
+
+#[cfg(windows)]
+fn move_to_recycle_bin(path: &std::path::Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    #[repr(C)]
+    struct ShFileOpStructW {
+        hwnd: isize,
+        w_func: u32,
+        p_from: *const u16,
+        p_to: *const u16,
+        f_flags: u16,
+        f_any_operations_aborted: i32,
+        h_name_mappings: *mut std::ffi::c_void,
+        lpsz_progress_title: *const u16,
+    }
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHFileOperationW(op: *mut ShFileOpStructW) -> i32;
+    }
+    const FO_DELETE: u32 = 3;
+    const FOF_SILENT: u16 = 0x0004;
+    const FOF_NOCONFIRMATION: u16 = 0x0010;
+    const FOF_ALLOWUNDO: u16 = 0x0040;
+    const FOF_NOERRORUI: u16 = 0x0400;
+
+    // pFrom is a list of paths, each NUL-terminated, ended by an extra NUL.
+    let mut from: Vec<u16> = path.as_os_str().encode_wide().collect();
+    from.extend([0, 0]);
+    let mut op = ShFileOpStructW {
+        hwnd: 0,
+        w_func: FO_DELETE,
+        p_from: from.as_ptr(),
+        p_to: std::ptr::null(),
+        f_flags: FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI,
+        f_any_operations_aborted: 0,
+        h_name_mappings: std::ptr::null_mut(),
+        lpsz_progress_title: std::ptr::null(),
+    };
+    let code = unsafe { SHFileOperationW(&mut op) };
+    if code != 0 || op.f_any_operations_aborted != 0 {
+        return Err(format!(
+            "couldn't move the file to the Recycle Bin (error {code:#x}) — is it open in another app?"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn move_to_recycle_bin(path: &std::path::Path) -> Result<(), String> {
+    std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -856,7 +937,9 @@ pub fn update_settings(
         || previous.hotkey_record != settings.hotkey_record
         || previous.hotkey_dock != settings.hotkey_dock
         || previous.snip_delay_enabled != settings.snip_delay_enabled
-        || previous.snip_delay_ms != settings.snip_delay_ms;
+        || previous.snip_delay_ms != settings.snip_delay_ms
+        || previous.replay_enabled != settings.replay_enabled
+        || previous.replay_hotkey != settings.replay_hotkey;
 
     // Skip re-registering shortcuts when only appearance / tabs / ignore list changed —
     // re-registering on every sidebar tweak was failing saves and made tabs look broken.
@@ -878,6 +961,11 @@ pub fn update_settings(
         }
     }
     db.save_settings(&settings)?;
+    {
+        // Restarting ffmpeg can take a second (encoder probe) — keep it off the IPC thread.
+        let replay_settings = settings.clone();
+        std::thread::spawn(move || crate::replay::apply_settings(&replay_settings));
+    }
     if settings.max_history < previous.max_history {
         // Shrinking the cap should drop overflow now, not only on the next insert
         match db.prune_unpinned_to_limit(settings.max_history) {
@@ -1528,4 +1616,110 @@ pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     crate::themes::read_text_file(&path)
+}
+
+// ---------------------------------------------------------------- instant replay
+
+#[tauri::command]
+pub fn replay_status() -> crate::replay::ReplayStatus {
+    crate::replay::status()
+}
+
+#[tauri::command]
+pub async fn save_replay_clip(app: AppHandle) -> Result<ClipboardItem, String> {
+    tauri::async_runtime::spawn_blocking(move || save_replay_and_publish(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Hotkey path: never blocks the shortcut handler, reports via sound + event.
+pub fn save_replay_in_background(app: AppHandle) {
+    std::thread::spawn(move || {
+        if let Err(e) = save_replay_and_publish(&app) {
+            eprintln!("replay save failed: {e}");
+        }
+    });
+}
+
+fn save_replay_and_publish(app: &AppHandle) -> Result<ClipboardItem, String> {
+    // A second press while a save is running is a no-op, not an error chime + red toast.
+    if crate::replay::is_saving() {
+        return Err("Already saving a clip".into());
+    }
+    let prefs = app
+        .try_state::<Arc<Database>>()
+        .and_then(|db| db.get_settings().ok())
+        .unwrap_or_default();
+    let _ = app.emit("replay-saving", ());
+    if prefs.replay_notify_popup {
+        crate::replay_toast::show(app, "saving", "Saving clip…", "");
+    }
+    let result: Result<ClipboardItem, String> = (|| {
+        let clip = crate::replay::save_clip()?;
+        let path = clip.path.to_string_lossy().to_string();
+        let file_name = clip
+            .path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("replay.mp4")
+            .to_string();
+        let db = app
+            .try_state::<Arc<Database>>()
+            .ok_or_else(|| "database not ready".to_string())?;
+        let item = db
+            .insert("video", &path, &format!("video: {file_name}"))
+            .map(|item| item.for_event())?;
+        let _ = app.emit("clipboard-item", &item);
+        let _ = app.emit(
+            "replay-saved",
+            serde_json::json!({
+                "path": path,
+                "seconds": clip.seconds,
+                "width": clip.width,
+                "height": clip.height,
+                "vaultId": item.id,
+            }),
+        );
+        Ok(item)
+    })();
+    if prefs.replay_notify_sound {
+        crate::replay_toast::play_sound(result.is_ok());
+    }
+    match &result {
+        Ok(item) => {
+            if prefs.replay_notify_popup {
+                let detail = item
+                    .content
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                crate::replay_toast::show(app, "saved", "Clip saved", detail);
+            }
+        }
+        Err(e) => {
+            let _ = app.emit("replay-error", serde_json::json!({ "message": e }));
+            if prefs.replay_notify_popup {
+                crate::replay_toast::show(app, "error", "Couldn't save clip", e.clone());
+            }
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    /// Touches the real Recycle Bin, so it only runs on request:
+    /// `cargo test --lib recycle_bin -- --ignored`
+    #[test]
+    #[ignore]
+    fn recycle_bin_move_removes_the_file() {
+        let path = std::env::temp_dir().join(format!(
+            "snipclip-recycle-test-{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"snipclip recycle bin test").unwrap();
+        super::move_to_recycle_bin(&path).unwrap();
+        assert!(!path.exists(), "file should have left its folder");
+    }
 }

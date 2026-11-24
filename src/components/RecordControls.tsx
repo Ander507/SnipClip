@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Circle, Pause, Play, Square, Volume2, VolumeX } from "lucide-react";
+import { Circle, Pause, Play, Square, Volume2, VolumeX, X } from "lucide-react";
 import {
   hideRecorderBar,
   pauseRegionRecording,
@@ -46,6 +46,10 @@ export function RecordControls({
   const [systemAudio, setSystemAudio] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
   const tickRef = useRef<number | undefined>(undefined);
+  // Read by the timer so a pause freezes the clock. It used to keep counting while paused,
+  // which made Pause look like it did nothing.
+  const pausedRef = useRef(false);
+  const pauseBusyRef = useRef(false);
   const safeRegion = useMemo(() => sanitizeRecordRegion(region), [region]);
 
   useEffect(() => {
@@ -80,8 +84,9 @@ export function RecordControls({
       setStatus(null);
       setRecording(true);
       setElapsed(0);
+      pausedRef.current = false;
       tickRef.current = window.setInterval(() => {
-        setElapsed((n) => n + 1);
+        if (!pausedRef.current) setElapsed((n) => n + 1);
       }, 1000);
     } catch (err) {
       setStatus(null);
@@ -92,12 +97,24 @@ export function RecordControls({
   }
 
   async function handlePause() {
+    // One toggle at a time: a second click before the first answer would flip it straight back.
+    if (pauseBusyRef.current || busy || !recording) return;
+    pauseBusyRef.current = true;
     try {
       const nowPaused = await pauseRegionRecording();
+      pausedRef.current = nowPaused;
       setPaused(nowPaused);
     } catch (err) {
       onError(String(err));
+    } finally {
+      pauseBusyRef.current = false;
     }
+  }
+
+  /** Close the bar without recording. Before this there was no way to dismiss it. */
+  async function handleClose() {
+    if (recording || busy) return;
+    await hideRecorderBar().catch(() => undefined);
   }
 
   async function handleStop() {
@@ -134,8 +151,13 @@ export function RecordControls({
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-line-strong bg-raised/95 px-3 py-2 shadow-2xl backdrop-blur-md">
-      <span className="min-w-[3.25rem] rounded bg-inset px-2 py-0.5 font-mono text-[11px] tabular-nums text-fg">
+    <div className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-line-strong bg-raised/95 px-3 py-2 shadow-2xl backdrop-blur-md">
+      <span
+        className={`min-w-[3.25rem] rounded bg-inset px-2 py-0.5 text-center font-mono text-[11px] tabular-nums ${
+          paused && !status ? "text-fg-muted" : "text-fg"
+        }`}
+        title={paused ? "Paused" : undefined}
+      >
         {status ?? formatTimer(elapsed)}
       </span>
 
@@ -211,6 +233,19 @@ export function RecordControls({
       >
         {systemAudio && format === "mp4" ? <Volume2 size={13} /> : <VolumeX size={13} />}
       </button>
+
+      {!recording && (
+        <button
+          type="button"
+          disabled={busy}
+          title="Close"
+          aria-label="Close recorder"
+          onClick={() => void handleClose()}
+          className="rounded-md p-1 text-fg-muted transition hover:bg-hover hover:text-fg disabled:opacity-30"
+        >
+          <X size={13} />
+        </button>
+      )}
     </div>
   );
 }

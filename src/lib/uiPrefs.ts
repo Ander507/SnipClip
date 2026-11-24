@@ -42,7 +42,7 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   borderStrength: "normal",
   sidebarPosition: "left",
   sidebarCollapsed: false,
-  imageView: "list",
+  imageView: "grid",
   thumbSize: "medium",
   paletteAnchor: "bottom-right",
   paletteWidth: 380,

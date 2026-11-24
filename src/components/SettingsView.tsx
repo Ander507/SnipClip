@@ -27,8 +27,16 @@ import {
   Sparkles,
   PanelBottom,
   ExternalLink,
+  Film,
 } from "lucide-react";
-import type { AppSettings, ClearInterval, Category } from "../lib/types";
+import type {
+  AppSettings,
+  ClearInterval,
+  Category,
+  ReplayQuality,
+  ReplayResolution,
+  ReplayStatus,
+} from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
 import { normalizeAppSettings } from "../lib/settings";
 import {
@@ -50,6 +58,7 @@ import {
   importVault,
   setVaultPassword as setVaultPasswordCmd,
   openUrl,
+  replayStatus,
 } from "../lib/api";
 import {
   ACCENTS,
@@ -82,14 +91,14 @@ interface Props {
   initialSection?: string | null;
 }
 
-type CaptureTarget = "clipboard" | "snip" | "record" | "dock" | null;
+type CaptureTarget = "clipboard" | "snip" | "record" | "dock" | "replay" | null;
 
 const TAB_ORDER: { id: Category; label: string }[] = [
   { id: "all", label: "All" },
   { id: "text", label: "Text" },
   { id: "images", label: "Images" },
   { id: "screenshots", label: "Screenshots" },
-  { id: "videos", label: "Videos" },
+  { id: "videos", label: "Clips" },
   { id: "math", label: "Math" },
   { id: "links", label: "Links" },
   { id: "pinned", label: "Pinned" },
@@ -144,15 +153,35 @@ function keyFromEvent(e: KeyboardEvent): string | null {
 
 function eventToAccelerator(e: KeyboardEvent): string | null {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
+  // A global hotkey needs Ctrl, Alt or Win; Shift alone would hijack normal typing everywhere.
+  if (!(e.ctrlKey || e.altKey || e.metaKey)) return null;
   const parts: string[] = [];
   if (e.ctrlKey || e.metaKey) parts.push("Control");
   if (e.altKey) parts.push("Alt");
   if (e.shiftKey) parts.push("Shift");
   const key = keyFromEvent(e);
-  if (!key || parts.length === 0) return null;
+  if (!key) return null;
   parts.push(key);
   return parts.join("+");
 }
+
+/** Order- and case-insensitive form of an accelerator, for conflict checks. */
+function normalizeAccel(accel: string): string {
+  const canon = accel
+    .split("+")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean)
+    .map((p) => {
+      if (["ctrl", "control", "commandorcontrol", "cmdorctrl", "command", "cmd"].includes(p)) return "ctrl";
+      if (p === "option") return "alt";
+      if (["super", "win", "windows", "meta"].includes(p)) return "meta";
+      return p;
+    });
+  return Array.from(new Set(canon)).sort().join("+");
+}
+
+/** The quick-paste palette's key is fixed, so no global hotkey may take it. */
+const PALETTE_HOTKEY = "Alt+C";
 
 function matchesSettingsQuery(query: string, keywords: string): boolean {
   const q = query.trim().toLowerCase();
@@ -279,6 +308,13 @@ const SETTINGS_SECTIONS = [
       "clipboard popup win+v alt+c position anchor cursor mouse center bottom width items count images thumbnails gif gifs klipy api key emoji kaomoji symbols drag",
   },
   {
+    id: "replay",
+    label: "Instant replay",
+    icon: Film,
+    keywords:
+      "instant replay clip clipping last seconds minutes buffer medal shadowplay record gameplay game hotkey fps quality bitrate resolution audio monitor display encoder nvenc",
+  },
+  {
     id: "snip-delay",
     label: "Snip delay",
     icon: Timer,
@@ -327,6 +363,30 @@ const POPUP_ANCHOR_OPTIONS = [
   { value: "cursor", label: "Next to the mouse" },
 ] as const;
 
+const REPLAY_LENGTHS = [15, 30, 60, 120, 180, 300, 600];
+
+function replayLengthOptions(current: number) {
+  const all = REPLAY_LENGTHS.includes(current) ? REPLAY_LENGTHS : [...REPLAY_LENGTHS, current];
+  return [...all]
+    .sort((a, b) => a - b)
+    .map((n) => ({
+      value: String(n),
+      label: n >= 60 && n % 60 === 0 ? `${n / 60} min` : `${n} seconds`,
+    }));
+}
+
+function replayStatusText(draftOn: boolean, savedOn: boolean, info: ReplayStatus | null) {
+  if (draftOn !== savedOn) return "Save settings to apply.";
+  if (!savedOn) return "Off. Nothing is recorded.";
+  if (!info) return "Starting…";
+  if (info.error) return info.error;
+  if (!info.running) return "Starting…";
+  const parts = [`Recording · ${info.buffered}s of ${info.seconds}s buffered`];
+  if (info.encoder) parts.push(info.encoder);
+  if (info.source) parts.push(info.source);
+  return parts.join(" · ");
+}
+
 function isDirty(a: AppSettings, b: AppSettings) {
   return (
     a.hotkeyClipboard !== b.hotkeyClipboard ||
@@ -361,6 +421,16 @@ function isDirty(a: AppSettings, b: AppSettings) {
     a.uiScale !== b.uiScale ||
     a.themeBackdrop !== b.themeBackdrop ||
     a.klipyApiKey !== b.klipyApiKey ||
+    a.replayEnabled !== b.replayEnabled ||
+    a.replaySeconds !== b.replaySeconds ||
+    a.replayHotkey !== b.replayHotkey ||
+    a.replayFps !== b.replayFps ||
+    a.replayQuality !== b.replayQuality ||
+    a.replayResolution !== b.replayResolution ||
+    a.replayAudio !== b.replayAudio ||
+    a.replayMonitor !== b.replayMonitor ||
+    a.replayNotifyPopup !== b.replayNotifyPopup ||
+    a.replayNotifySound !== b.replayNotifySound ||
     JSON.stringify(a.uiPrefs) !== JSON.stringify(b.uiPrefs)
   );
 }
@@ -380,6 +450,9 @@ export function SettingsView({
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [capturing, setCapturing] = useState<CaptureTarget>(null);
+  const [hotkeyError, setHotkeyError] = useState<{ target: Exclude<CaptureTarget, null>; message: string } | null>(
+    null
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -409,6 +482,32 @@ export function SettingsView({
   previewUiRef.current = onPreviewUiPrefs;
   const captureRef = useRef<CaptureTarget>(null);
   captureRef.current = capturing;
+  const draftRef = useRef<AppSettings | null>(null);
+  draftRef.current = draft;
+
+  // Live replay status (encoder, buffered seconds, errors) while replay is switched on.
+  const [replayInfo, setReplayInfo] = useState<ReplayStatus | null>(null);
+  const replaySaved = settings?.replayEnabled ?? false;
+  useEffect(() => {
+    if (!replaySaved) {
+      setReplayInfo(null);
+      return;
+    }
+    let disposed = false;
+    const poll = () =>
+      void replayStatus()
+        .then((s) => {
+          if (!disposed) setReplayInfo(s);
+        })
+        .catch(() => {});
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [replaySaved]);
+  const replayHint = replayStatusText(draft?.replayEnabled ?? false, replaySaved, replayInfo);
 
   useEffect(() => {
     void getSettings().then((s) => {
@@ -529,37 +628,89 @@ export function SettingsView({
   }, [draft]);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!captureRef.current) return;
+    const target = captureRef.current;
+    if (!target) return;
+    // Tab keeps its normal job (moving focus) and ends the capture.
+    if (e.key === "Tab") {
+      setCapturing(null);
+      setHotkeyError(null);
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") {
       setCapturing(null);
+      setHotkeyError(null);
       return;
     }
+    // Bare modifier presses are just the chord being built.
+    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
     const accel = eventToAccelerator(e);
-    if (!accel) return;
+    if (!accel) {
+      if (!(e.ctrlKey || e.altKey || e.metaKey) && keyFromEvent(e)) {
+        setHotkeyError({ target, message: "Use Ctrl or Alt with a key" });
+      }
+      return;
+    }
+    const d = draftRef.current;
+    if (d) {
+      const norm = normalizeAccel(accel);
+      const others: Array<[string, string]> = [
+        ["Toggle UI", d.hotkeyClipboard],
+        ["Screenshot snipper", d.hotkeySnip],
+        ["Screen recorder", d.hotkeyRecord],
+        ["Clipboard popup", d.hotkeyDock],
+        ["Save replay", d.replayHotkey],
+      ];
+      const own: Record<Exclude<CaptureTarget, null>, number> = {
+        clipboard: 0,
+        snip: 1,
+        record: 2,
+        dock: 3,
+        replay: 4,
+      };
+      let conflict: string | null = null;
+      if (normalizeAccel(PALETTE_HOTKEY) === norm) conflict = `the quick paste palette (${PALETTE_HOTKEY})`;
+      else {
+        const hit = others.find(([, other], i) => i !== own[target] && normalizeAccel(other) === norm);
+        if (hit) conflict = `"${hit[0]}"`;
+      }
+      if (conflict) {
+        setHotkeyError({ target, message: `${displayHotkey(accel)} is already used by ${conflict}` });
+        return;
+      }
+    }
     setDraft((prev) => {
       if (!prev) return prev;
-      if (captureRef.current === "clipboard") {
-        return { ...prev, hotkeyClipboard: accel };
-      }
-      if (captureRef.current === "record") {
-        return { ...prev, hotkeyRecord: accel };
-      }
-      if (captureRef.current === "dock") {
-        return { ...prev, hotkeyDock: accel };
-      }
+      if (target === "clipboard") return { ...prev, hotkeyClipboard: accel };
+      if (target === "record") return { ...prev, hotkeyRecord: accel };
+      if (target === "dock") return { ...prev, hotkeyDock: accel };
+      if (target === "replay") return { ...prev, replayHotkey: accel };
       return { ...prev, hotkeySnip: accel };
     });
     setCapturing(null);
+    setHotkeyError(null);
     setError(null);
   }, []);
 
   useEffect(() => {
     if (!capturing) return;
+    const cancel = () => setCapturing(null);
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    window.addEventListener("blur", cancel);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("blur", cancel);
+    };
   }, [capturing, onKeyDown]);
+
+  function startCapture(target: Exclude<CaptureTarget, null>) {
+    setHotkeyError(null);
+    setCapturing(target);
+  }
+  function cancelCapture(target: Exclude<CaptureTarget, null>) {
+    setCapturing((cur) => (cur === target ? null : cur));
+  }
 
   async function handleSave() {
     if (!draft) return;
@@ -1469,21 +1620,27 @@ export function SettingsView({
             hint="Default Ctrl + Shift + V"
             value={draft.hotkeyClipboard}
             active={capturing === "clipboard"}
-            onCapture={() => setCapturing("clipboard")}
+            error={hotkeyError?.target === "clipboard" ? hotkeyError.message : undefined}
+            onCapture={() => startCapture("clipboard")}
+            onCancel={() => cancelCapture("clipboard")}
           />
           <HotkeyRow
             label="Screenshot snipper"
             hint="Default Ctrl + Shift + S — use stealth presets below to avoid app detectors"
             value={draft.hotkeySnip}
             active={capturing === "snip"}
-            onCapture={() => setCapturing("snip")}
+            error={hotkeyError?.target === "snip" ? hotkeyError.message : undefined}
+            onCapture={() => startCapture("snip")}
+            onCancel={() => cancelCapture("snip")}
           />
           <HotkeyRow
             label="Screen recorder"
             hint="Default Ctrl + Shift + R — opens region picker in record mode"
             value={draft.hotkeyRecord}
             active={capturing === "record"}
-            onCapture={() => setCapturing("record")}
+            error={hotkeyError?.target === "record" ? hotkeyError.message : undefined}
+            onCapture={() => startCapture("record")}
+            onCancel={() => cancelCapture("record")}
           />
           <div className="flex flex-wrap gap-2 px-1">
             {RECORD_HOTKEY_PRESETS.map((preset) => (
@@ -1509,7 +1666,9 @@ export function SettingsView({
             hint="Default Ctrl + Shift + D — floating history over any app (same panel as Alt+C)"
             value={draft.hotkeyDock}
             active={capturing === "dock"}
-            onCapture={() => setCapturing("dock")}
+            error={hotkeyError?.target === "dock" ? hotkeyError.message : undefined}
+            onCapture={() => startCapture("dock")}
+            onCancel={() => cancelCapture("dock")}
           />
           <div className="flex flex-wrap gap-2 px-1">
             {DOCK_HOTKEY_PRESETS.map((preset) => (
@@ -1706,6 +1865,150 @@ export function SettingsView({
               />
             </div>
           </div>
+        </SettingsSection>
+
+        <SettingsSection id="replay" query={search}>
+          <SectionHeading icon={Film} title="Instant replay">
+            Records the screen in the background and saves the last moments when you press the
+            hotkey. Clips go to your Videos folder (SnipClip) and into the vault.
+          </SectionHeading>
+          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-line bg-raised px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-[13px] text-fg-secondary">Instant replay</span>
+              <span className="text-[11px] text-fg-muted">{replayHint}</span>
+            </div>
+            <Switch
+              checked={draft.replayEnabled}
+              onChange={(v) => setDraft((prev) => (prev ? { ...prev, replayEnabled: v } : prev))}
+            />
+          </label>
+          {draft.replayEnabled && (
+            <>
+              <HotkeyRow
+                label="Save replay"
+                hint="Default Alt + F10. Plays a short sound when the clip is saved"
+                value={draft.replayHotkey}
+                active={capturing === "replay"}
+                error={hotkeyError?.target === "replay" ? hotkeyError.message : undefined}
+                onCapture={() => startCapture("replay")}
+                onCancel={() => cancelCapture("replay")}
+              />
+              <p className="-mt-1 px-1 text-[11px] text-fg-muted">
+                Alt+F10 and Alt+Z are also NVIDIA overlay shortcuts — pick another if you use GeForce
+                Experience / NVIDIA app.
+              </p>
+              <div className="rounded-lg border border-line bg-raised">
+                <SettingRow label="Clip length" hint="How far back a saved clip reaches">
+                  <SelectDropdown
+                    aria-label="Clip length"
+                    value={String(draft.replaySeconds)}
+                    options={replayLengthOptions(draft.replaySeconds)}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replaySeconds: Number(v) } : prev))
+                    }
+                  />
+                </SettingRow>
+                <RowDivider />
+                <SettingRow label="Frame rate">
+                  <Segmented
+                    aria-label="Replay frame rate"
+                    value={String(draft.replayFps)}
+                    options={[
+                      { value: "30", label: "30 fps" },
+                      { value: "60", label: "60 fps" },
+                    ]}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replayFps: Number(v) } : prev))
+                    }
+                  />
+                </SettingRow>
+                <RowDivider />
+                <SettingRow label="Quality" hint="Higher quality uses more disk while buffering">
+                  <Segmented<ReplayQuality>
+                    aria-label="Replay quality"
+                    value={draft.replayQuality}
+                    options={[
+                      { value: "low", label: "Low" },
+                      { value: "medium", label: "Medium" },
+                      { value: "high", label: "High" },
+                    ]}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replayQuality: v } : prev))
+                    }
+                  />
+                </SettingRow>
+                <RowDivider />
+                <SettingRow label="Resolution" hint="Native is the lightest on the CPU">
+                  <Segmented<ReplayResolution>
+                    aria-label="Replay resolution"
+                    value={draft.replayResolution}
+                    options={[
+                      { value: "native", label: "Native" },
+                      { value: "1080p", label: "1080p" },
+                      { value: "720p", label: "720p" },
+                    ]}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replayResolution: v } : prev))
+                    }
+                  />
+                </SettingRow>
+                <RowDivider />
+                <SettingRow label="Display">
+                  <SelectDropdown
+                    aria-label="Replay display"
+                    value={String(draft.replayMonitor)}
+                    options={[0, 1, 2, 3].map((n) => ({
+                      value: String(n),
+                      label: n === 0 ? "Display 1 (primary)" : `Display ${n + 1}`,
+                    }))}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replayMonitor: Number(v) } : prev))
+                    }
+                  />
+                </SettingRow>
+                <RowDivider />
+                <label className="flex cursor-pointer items-center justify-between gap-4 px-4 py-3">
+                  <span className="text-[13px] text-fg-secondary">Record desktop audio</span>
+                  <Switch
+                    checked={draft.replayAudio}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replayAudio: v } : prev))
+                    }
+                  />
+                </label>
+                <RowDivider />
+                <label className="flex cursor-pointer items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <span className="block text-[13px] text-fg-secondary">"Clip saved" popup</span>
+                    <span className="text-[11px] text-fg-muted">
+                      Small corner notice. It never takes focus and isn't recorded.
+                    </span>
+                  </div>
+                  <Switch
+                    checked={draft.replayNotifyPopup}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replayNotifyPopup: v } : prev))
+                    }
+                  />
+                </label>
+                <RowDivider />
+                <label className="flex cursor-pointer items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <span className="block text-[13px] text-fg-secondary">Save sound</span>
+                    <span className="text-[11px] text-fg-muted">
+                      With desktop audio on, the chime ends up in the next clip.
+                    </span>
+                  </div>
+                  <Switch
+                    checked={draft.replayNotifySound}
+                    onChange={(v) =>
+                      setDraft((prev) => (prev ? { ...prev, replayNotifySound: v } : prev))
+                    }
+                  />
+                </label>
+              </div>
+            </>
+          )}
         </SettingsSection>
 
         <SettingsSection id="snip-delay" query={search}>
@@ -2190,23 +2493,41 @@ function HotkeyRow({
   hint,
   value,
   active,
+  error,
   onCapture,
+  onCancel,
 }: {
   label: string;
   hint: string;
   value: string;
   active: boolean;
+  error?: string;
   onCapture: () => void;
+  onCancel: () => void;
 }) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Keep focus on the button while capturing so that losing it (click elsewhere) cancels.
+  useEffect(() => {
+    if (active) btnRef.current?.focus();
+  }, [active]);
   return (
     <div className="flex items-center gap-4 rounded-lg border border-line bg-raised px-4 py-3">
       <div className="min-w-0 flex-1">
         <p className="text-[13px] text-fg-secondary">{label}</p>
         <p className="text-[11px] text-fg-muted">{hint}</p>
+        {error && (
+          <p role="alert" className="mt-1 text-[11px] text-danger">
+            {error}
+          </p>
+        )}
       </div>
       <button
+        ref={btnRef}
         type="button"
         onClick={onCapture}
+        onBlur={() => {
+          if (active) onCancel();
+        }}
         className={clsx(
           "min-w-[150px] rounded-md border px-3 py-2 font-mono text-[12px] transition",
           active
