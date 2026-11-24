@@ -59,6 +59,20 @@ export function coverEdge(item: ClipboardItem, boxW: number, boxH: number): numb
   return Math.ceil(Math.max((boxW * long) / w, (boxH * long) / h));
 }
 
+/**
+ * Long edge to request so an image shown whole (`object-contain`) in a `boxW`×`boxH` frame
+ * is sharp without upscaling.
+ */
+export function containEdge(item: ClipboardItem, boxW: number, boxH: number): number {
+  const { width: w, height: h } = item;
+  if (!w || !h) return Math.max(boxW, boxH);
+  return Math.ceil(Math.max(w, h) * Math.min(boxW / w, boxH / h));
+}
+
+/** Hover/keyboard-focus reveal for secondary action clusters (children of a `group`). */
+export const REVEAL_ON_HOVER =
+  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100";
+
 export function TypeIcon({
   type,
   isCode,
@@ -147,8 +161,13 @@ export interface RowMetrics {
   iconBox: string;
   padPx: number;
   iconPx: number;
+  /** Width of the leading icon/thumbnail column, so text lines up across every card type. */
+  leadW: number;
   thumbW: number;
   thumbH: number;
+  /** Space between the content and its meta line. */
+  metaGap: string;
+  metaGapPx: number;
   /** Plain-text preview lines. */
   lines: 1 | 2 | 3;
   codeLines: number;
@@ -165,8 +184,11 @@ export const ROW_METRICS: Record<Density, RowMetrics> = {
     iconBox: "h-8 w-8",
     padPx: 8,
     iconPx: 32,
+    leadW: 48,
     thumbW: 48,
     thumbH: 36,
+    metaGap: "mt-0.5",
+    metaGapPx: 2,
     lines: 1,
     codeLines: 3,
     rowGap: 6,
@@ -178,8 +200,11 @@ export const ROW_METRICS: Record<Density, RowMetrics> = {
     iconBox: "h-10 w-10",
     padPx: 14,
     iconPx: 40,
+    leadW: 64,
     thumbW: 64,
     thumbH: 48,
+    metaGap: "mt-1",
+    metaGapPx: 4,
     lines: 2,
     codeLines: 6,
     rowGap: 12,
@@ -191,8 +216,11 @@ export const ROW_METRICS: Record<Density, RowMetrics> = {
     iconBox: "h-12 w-12",
     padPx: 16,
     iconPx: 48,
+    leadW: 80,
     thumbW: 80,
     thumbH: 60,
+    metaGap: "mt-1.5",
+    metaGapPx: 6,
     lines: 3,
     codeLines: 10,
     rowGap: 16,
@@ -214,7 +242,7 @@ export function ActionButton({
   tone?: "accent" | "danger" | "neutral";
   /** Highlighted state (e.g. already pinned). */
   active?: boolean;
-  /** Tighter padding for grid tiles. */
+  /** Accepted for call-site compatibility; the hit area is always 28×28 px. */
   small?: boolean;
   children: ReactNode;
 }) {
@@ -224,8 +252,7 @@ export function ActionButton({
       title={title}
       aria-label={title}
       className={clsx(
-        "flex items-center justify-center rounded transition hover:bg-hover",
-        "h-7 w-7",
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover",
         active
           ? "text-accent"
           : clsx(
@@ -252,7 +279,7 @@ export interface MetaPart {
   shrink?: boolean;
 }
 
-/** Small "a • b • c" line; null/false parts are skipped. */
+/** Small "a · b · c" line; null/false parts are skipped. */
 export function MetaLine({
   parts,
   className,
@@ -264,7 +291,7 @@ export function MetaLine({
   return (
     <div
       className={clsx(
-        "flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[10px] leading-[15px] text-fg-faint",
+        "flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] leading-4 text-fg-muted",
         className
       )}
     >
@@ -273,7 +300,11 @@ export function MetaLine({
           key={part.key}
           className={clsx("flex items-center gap-1.5", part.shrink ? "min-w-0" : "shrink-0")}
         >
-          {i > 0 && <span aria-hidden>•</span>}
+          {i > 0 && (
+            <span aria-hidden className="text-fg-faint">
+              ·
+            </span>
+          )}
           {part.node}
         </span>
       ))}

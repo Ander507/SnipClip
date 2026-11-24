@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Pause, Play, Square, Volume2, VolumeX, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import {
   hideRecorderBar,
   pauseRegionRecording,
@@ -7,6 +8,7 @@ import {
   stopRegionRecording,
 } from "../lib/api";
 import { isValidRecordRegion, sanitizeRecordRegion } from "../lib/recordDimensions";
+import { RECORDER_REQUEST_PAUSE, RECORDER_REQUEST_STOP } from "../lib/status";
 
 export type RecordFormat = "gif" | "mp4";
 
@@ -149,6 +151,26 @@ export function RecordControls({
       setBusy(false);
     }
   }
+
+  // The title-bar status pill asks for stop/pause by event so both go through the exact same
+  // flow as the buttons here (finalize, hide the bar, timer). Refs keep the listeners pointed at
+  // the latest handlers without re-subscribing on every render.
+  const stopRef = useRef(handleStop);
+  const pauseRef = useRef(handlePause);
+  stopRef.current = handleStop;
+  pauseRef.current = handlePause;
+
+  useEffect(() => {
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+    const keep = (u: () => void) => (disposed ? u() : void unlisteners.push(u));
+    void listen(RECORDER_REQUEST_STOP, () => void stopRef.current()).then(keep);
+    void listen(RECORDER_REQUEST_PAUSE, () => void pauseRef.current()).then(keep);
+    return () => {
+      disposed = true;
+      for (const u of unlisteners) u();
+    };
+  }, []);
 
   return (
     <div className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-line-strong bg-raised/95 px-3 py-2 shadow-2xl backdrop-blur-md">

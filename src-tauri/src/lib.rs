@@ -16,6 +16,7 @@ mod scratch;
 mod screen_capture;
 mod screenshot_popup;
 mod snip;
+mod status;
 mod system_audio;
 mod themes;
 mod transform;
@@ -49,6 +50,7 @@ pub fn run() {
             commands::item_thumbnail,
             commands::palette_copy_item,
             commands::paste_item,
+            commands::paste_target_info,
             commands::paste_items,
             commands::paste_file,
             commands::paste_text,
@@ -103,6 +105,7 @@ pub fn run() {
             commands::start_region_recording,
             commands::stop_region_recording,
             commands::replay_status,
+            status::app_status,
             commands::delete_item_file,
             commands::save_replay_clip,
             commands::pause_region_recording,

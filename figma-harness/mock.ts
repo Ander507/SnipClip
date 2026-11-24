@@ -702,6 +702,15 @@ async function handle(cmd: string, args: any): Promise<unknown> {
       return { items: GIFS, page: 1, hasNext: false };
     case "replay_status":
       return replayStatus();
+    case "app_status":
+      // Mirrors status.rs: replay full (ready), no recording, clipboard paused per scenario.
+      return {
+        replay: { enabled: true, running: true, bufferedSecs: 60, targetSecs: 60, error: null, encoder: "NVIDIA NVENC" },
+        recording: { state: "idle", elapsedMs: 0, format: null },
+        clipboard: { paused },
+      };
+    case "paste_target_info":
+      return { title: "Untitled - Notepad", exe: "notepad.exe", name: "Notepad" };
     case "recorder_bar_ready":
       return { region: { physX: 320, physY: 180, physW: 1280, physH: 720 }, format: "mp4", fps: 30 };
     case "start_region_recording":

@@ -51,7 +51,36 @@ Nothing is committed since `e932ce1`.
 - **Not changed (open decision):** Enter copies in the main window but pastes in the popup.
 - **Tests:** `cargo test --lib` passes 25 tests, plus 1 ignored. `tsc` and `npm run build` pass.
 
-### 5.2 UX (next)
+### 5.2A Core experience: done, waiting for ChatGPT review round 3 (2026-11-24)
+- Checkpoint commit `22d80d9` (5.1 plus everything before) is on branch `polish/ux-phase-5`. The 5.2A work is uncommitted.
+- **Grids (`ClipboardGrid.tsx` `gridLayout`):**
+  - Columns come from the MIN tile width, then tiles grow up to the max.
+  - Clips are 240–340 px at 16:9. Images are 180–280 px in a 4:3 container with `object-contain`.
+  - Media flows continuously: per-day rows wasted space. Pinned keeps its own section.
+  - ←/→ move by one tile.
+- **Cards:** the content is the primary line, with a meta line of type · time · source · size. The density setting is respected.
+- **Keys:**
+  - Enter pastes into a verified previous app (`paste.rs` `is_pastable_target`, `paste_target_info`), else copies.
+  - Ctrl+Enter copies. Ctrl+F focuses search. Ctrl+P pins.
+  - Hint chips are dynamic.
+  - Counts refresh on add, remove, undo, pin and delete-file.
+- **Status pill (`StatusPill.tsx`, `lib/status.ts`, `status.rs app_status`):**
+  - Shows replay preparing / buffering / ready, recording (red), recording paused, clipboard paused (amber) and replay error.
+  - A popover holds the controls. Stop goes through the recorder bar's own flow (`recorder-request-stop`).
+- **Tests:**
+  - Rust: 33 pass.
+  - `figma-harness/keys.mjs`: 7/7.
+  - `figma-harness/widths.mjs`: grid widths.
+  - Real app: checked at 5 widths.
+- **Not verified:**
+  - keyboard in the real WebView2 window (synthetic keys are blocked)
+  - display scaling above 100%
+  - NVIDIA overlay conflict
+  - libraries with thousands of items
+- Figma: round-3 brief on page 0; old screens on pages 97 (round 2) and 98 (round 1).
+
+### 5.2B (after review): Settings nav, palette, content detection, missing-file and empty states
+
 - Responsive media grids that fill the window.
 - Clipboard card hierarchy and density.
 - A Settings sidebar with categories.

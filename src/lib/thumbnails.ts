@@ -109,7 +109,7 @@ export interface VideoPoster {
 }
 
 const POSTER_MAX_ENTRIES = 300;
-const POSTER_MAX_EDGE = 640;
+const POSTER_MAX_EDGE = 720;
 const POSTER_TIMEOUT_MS = 10_000;
 const POSTER_CONCURRENCY = 2;
 

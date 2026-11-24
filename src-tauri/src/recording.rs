@@ -75,6 +75,63 @@ struct ActiveRecording {
 
 static RECORDING: Mutex<Option<ActiveRecording>> = Mutex::new(None);
 
+/// Wall-clock bookkeeping for the status indicator. Kept apart from `RECORDING` because that
+/// lock is held for the whole encoder start-up (about a second); this one is only ever held for
+/// a few instructions, so polling it never stalls and never touches the capture loop.
+struct RecordingClock {
+    started: Instant,
+    /// Total time spent paused in earlier, already-resumed pauses.
+    paused_total: Duration,
+    /// When the current pause began, as an offset from `started`. `None` while running.
+    paused_at: Option<Duration>,
+    format: &'static str,
+}
+
+static CLOCK: Mutex<Option<RecordingClock>> = Mutex::new(None);
+
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingStatus {
+    /// "idle" | "recording" | "paused"
+    pub state: &'static str,
+    /// Recorded time, excluding time spent paused.
+    pub elapsed_ms: u64,
+    pub format: Option<String>,
+}
+
+/// Pure pause accounting. `since_start` is the time since recording began; `paused_total` the
+/// sum of finished pauses; `paused_at` the offset at which the current pause began (if any).
+/// While paused the clock is frozen at the moment the pause began.
+pub fn elapsed_excluding_pauses(
+    since_start: Duration,
+    paused_total: Duration,
+    paused_at: Option<Duration>,
+) -> Duration {
+    let end = paused_at.map_or(since_start, |at| at.min(since_start));
+    end.saturating_sub(paused_total)
+}
+
+/// Snapshot for the title-bar pill. Never blocks on the encoder or the capture thread.
+pub fn recording_status() -> RecordingStatus {
+    let guard = CLOCK.lock();
+    match guard.as_ref() {
+        None => RecordingStatus {
+            state: "idle",
+            elapsed_ms: 0,
+            format: None,
+        },
+        Some(c) => {
+            let elapsed =
+                elapsed_excluding_pauses(c.started.elapsed(), c.paused_total, c.paused_at);
+            RecordingStatus {
+                state: if c.paused_at.is_some() { "paused" } else { "recording" },
+                elapsed_ms: elapsed.as_millis() as u64,
+                format: Some(c.format.to_string()),
+            }
+        }
+    }
+}
+
 pub fn recordings_dir() -> Result<PathBuf, String> {
     // Videos, not Pictures. Older recordings stay in Pictures/SnipClip/recordings and keep
     // working: items store absolute paths and the asset scope still covers Pictures.
@@ -769,6 +826,12 @@ pub fn start_region_recording(
         }
     }
 
+    *CLOCK.lock() = Some(RecordingClock {
+        started: Instant::now(),
+        paused_total: Duration::ZERO,
+        paused_at: None,
+        format: fmt.ext(),
+    });
     *guard = Some(ActiveRecording { stop, paused, join });
     Ok(())
 }
@@ -793,6 +856,14 @@ pub fn pause_region_recording() -> Result<bool, String> {
     };
     let next = !active.paused.load(Ordering::SeqCst);
     active.paused.store(next, Ordering::SeqCst);
+    if let Some(c) = CLOCK.lock().as_mut() {
+        let since_start = c.started.elapsed();
+        if next {
+            c.paused_at.get_or_insert(since_start);
+        } else if let Some(at) = c.paused_at.take() {
+            c.paused_total += since_start.saturating_sub(at);
+        }
+    }
     Ok(next)
 }
 
@@ -803,6 +874,7 @@ pub fn stop_region_recording() -> Result<String, String> {
             .take()
             .ok_or_else(|| "no active recording".to_string())?
     };
+    *CLOCK.lock() = None;
 
     active.stop.store(true, Ordering::SeqCst);
     let path = active
@@ -816,4 +888,36 @@ pub fn stop_region_recording() -> Result<String, String> {
     }
 
     Ok(path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn s(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    #[test]
+    fn running_without_pauses_is_wall_time() {
+        assert_eq!(elapsed_excluding_pauses(s(134), s(0), None), s(134));
+    }
+
+    #[test]
+    fn finished_pauses_are_subtracted() {
+        assert_eq!(elapsed_excluding_pauses(s(100), s(30), None), s(70));
+    }
+
+    #[test]
+    fn active_pause_freezes_the_clock() {
+        // paused at t=40 with 10s of earlier pauses: shows 30s no matter how long we wait
+        assert_eq!(elapsed_excluding_pauses(s(60), s(10), Some(s(40))), s(30));
+        assert_eq!(elapsed_excluding_pauses(s(600), s(10), Some(s(40))), s(30));
+    }
+
+    #[test]
+    fn never_underflows() {
+        assert_eq!(elapsed_excluding_pauses(s(5), s(9), None), s(0));
+        assert_eq!(elapsed_excluding_pauses(s(5), s(0), Some(s(9))), s(5));
+    }
 }

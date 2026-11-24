@@ -47,3 +47,12 @@ overlay is shown over a desktop frame (`big.jpg`), which is what sits behind it 
 - Fonts are system fonts (Segoe UI / Cascadia etc.), not embedded.
 - Native window chrome (Mica/acrylic, shadows, rounded corners from Windows) is not part of the
   web content and isn't captured.
+
+## Extra checks (added in Phase 5.2A)
+
+| Command | What it does |
+| --- | --- |
+| `node figma-harness/widths.mjs [--collapsed]` | Renders Clips, Screenshots and Images at 720/960/1200/1440/1920 px and prints columns and tile widths. PNGs go to `out/widths/`. |
+| `node figma-harness/keys.mjs` | Keyboard smoke test on the main window (Ctrl+F, search editing, Enter fallback, Ctrl+P, → in grid, Space/Esc viewer, Enter on a focused button). Exits 1 on failure. |
+
+`public/media/` is git-ignored because its clips come from a local replay. Recreate it with frames and a short mp4 of your own before capturing on a fresh clone.

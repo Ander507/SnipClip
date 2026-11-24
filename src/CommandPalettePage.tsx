@@ -14,12 +14,16 @@ import {
   hideCommandPalette,
   pasteItem,
   pasteItems,
+  pasteTargetInfo,
+  NO_PASTE_TARGET_MESSAGE,
   searchClipboard,
   togglePin,
   transformOptions,
   transformPreview,
   type PaletteShowPayload,
   type PasteMode,
+  type PasteResult,
+  type PasteTarget,
   type TransformKind,
   type TransformOption,
 } from "./lib/api";
@@ -94,6 +98,10 @@ export function CommandPalette() {
   const [transform, setTransform] = useState<TransformKind | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Non-error status line, e.g. "Copied — no app to paste into"
+  const [notice, setNotice] = useState<string | null>(null);
+  // The app Enter pastes into; null = nothing safe is tracked, so Enter only copies
+  const [pasteTarget, setPasteTarget] = useState<PasteTarget | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [tab, setTab] = useState<PaletteTab>("clipboard");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +150,14 @@ export function CommandPalette() {
     }
   }, []);
 
+  const refreshPasteTarget = useCallback(async () => {
+    try {
+      setPasteTarget(await pasteTargetInfo());
+    } catch {
+      setPasteTarget(null);
+    }
+  }, []);
+
   const dismiss = useCallback(async () => {
     try {
       await hideCommandPalette();
@@ -164,6 +180,7 @@ export function CommandPalette() {
     if (root) root.style.backgroundColor = "transparent";
 
     void runSearch("");
+    void refreshPasteTarget();
 
     let cancelled = false;
     let unlistenShow: (() => void) | undefined;
@@ -188,8 +205,11 @@ export function CommandPalette() {
       setPicked([]);
       setTransform(null);
       setError(null);
+      setNotice(null);
       disarmClear();
       void runSearch("");
+      // capture_target_now ran before this event, so the tracked app is the one you came from
+      void refreshPasteTarget();
       requestAnimationFrame(() => inputRef.current?.focus());
     }).then((u) => {
       if (cancelled) u();
@@ -215,7 +235,7 @@ export function CommandPalette() {
       document.documentElement.classList.remove("palette-mode");
       document.body.classList.remove("palette-mode");
     };
-  }, [runSearch, dismiss, disarmClear]);
+  }, [runSearch, dismiss, disarmClear, refreshPasteTarget]);
 
   // Also re-runs when the item-count pref changes.
   useEffect(() => {
@@ -233,11 +253,19 @@ export function CommandPalette() {
     requestAnimationFrame(() => inputRef.current?.focus());
   }
 
+  /** A paste that found no safe app only copied: say so and keep the popup open. */
+  function noteFallback(result: PasteResult) {
+    if (!result.fallbackCopy) return;
+    setNotice(NO_PASTE_TARGET_MESSAGE);
+    void refreshPasteTarget();
+  }
+
   async function insertText(text: string, mode: PasteMode) {
     try {
       setError(null);
+      setNotice(null);
       // Opt-in: without Direct paste, only copy and close
-      await pasteText(text, directPaste ? mode : "copyOnly");
+      noteFallback(await pasteText(text, directPaste ? mode : "copyOnly"));
     } catch (err) {
       setError(String(err));
     }
@@ -249,8 +277,9 @@ export function CommandPalette() {
       await dismiss();
       return;
     }
+    setNotice(null);
     const path = await prepareGif(gif.gifUrl, gif.slug);
-    await pasteFile(path, directPaste ? mode : "copyOnly");
+    noteFallback(await pasteFile(path, directPaste ? mode : "copyOnly"));
   }
 
   function openPopupSettings() {
@@ -334,16 +363,19 @@ export function CommandPalette() {
     const effective: PasteMode = directPaste ? mode : "copyOnly";
     try {
       setError(null);
+      setNotice(null);
       if (picked.length > 1) {
-        await pasteItems(
-          picked,
-          effective,
-          transform,
-          directPaste && fieldFill ? "tab" : "none"
+        noteFallback(
+          await pasteItems(
+            picked,
+            effective,
+            transform,
+            directPaste && fieldFill ? "tab" : "none"
+          )
         );
       } else if (item) {
         const id = picked[0] ?? item.id;
-        await pasteItem(id, effective, transform);
+        noteFallback(await pasteItem(id, effective, transform));
       }
     } catch (err) {
       setError(String(err));
@@ -355,6 +387,7 @@ export function CommandPalette() {
     e.preventDefault();
     try {
       await togglePin(id);
+      void emit("library-changed");
       await runSearch(query);
     } catch (err) {
       console.error(err);
@@ -372,6 +405,7 @@ export function CommandPalette() {
     disarmClear();
     try {
       await clearHistory();
+      void emit("library-changed");
       setPicked([]);
       await runSearch(query);
     } catch (err) {
@@ -380,6 +414,13 @@ export function CommandPalette() {
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
+    // Ctrl+F: focus + select the search text (also stops the webview's find bar)
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      inputRef.current?.focus();
+      inputRef.current?.select();
+      return;
+    }
     if (e.ctrlKey && e.key === "Tab") {
       e.preventDefault();
       const at = TABS.findIndex((t) => t.id === tab);
@@ -427,12 +468,14 @@ export function CommandPalette() {
       cycleTransform(e.shiftKey ? -1 : 1);
       return;
     }
-    if (e.key === "ArrowDown") {
+    // Plain Up/Down only: Shift/Ctrl+arrows stay native text editing in the search box
+    const plainArrow = !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey;
+    if (e.key === "ArrowDown" && plainArrow) {
       e.preventDefault();
       setSelected((i) => Math.min(i + 1, Math.max(0, results.length - 1)));
       return;
     }
-    if (e.key === "ArrowUp") {
+    if (e.key === "ArrowUp" && plainArrow) {
       e.preventDefault();
       setSelected((i) => Math.max(i - 1, 0));
       return;
@@ -446,7 +489,12 @@ export function CommandPalette() {
       const item = results[selected];
       if (item && ((plain && document.activeElement !== inputRef.current) || ctrlOnly)) {
         e.preventDefault();
-        void togglePin(item.id).then(() => runSearch(query)).catch(console.error);
+        void togglePin(item.id)
+          .then(() => {
+            void emit("library-changed");
+            return runSearch(query);
+          })
+          .catch(console.error);
         return;
       }
     }
@@ -464,6 +512,28 @@ export function CommandPalette() {
   }
 
   const activeTransformLabel = options.find((o) => o.kind === transform)?.label;
+  // Same wording as the main window: Enter pastes only when a verified app is tracked
+  const enterAction = directPaste && pasteTarget ? `paste into ${pasteTarget.name}` : "copy";
+  const footerTitle =
+    "Enter paste · Ctrl+Enter copy · Ctrl+F search · Ctrl+P pin · Tab transform · Ctrl+Space pick · Esc close";
+  const footerHint = !directPaste
+    ? "Enter copy · Ctrl+P pin · enable Direct paste in Settings"
+    : tab === "gif"
+      ? `Enter ${enterAction.replace("paste", "paste GIF")} · Shift+Enter copy link · Ctrl+Enter copy`
+      : tab !== "clipboard"
+        ? `Enter ${enterAction} · Shift+Enter type · Ctrl+Enter copy`
+        : picked.length > 1
+          ? "Enter merge · Shift+Enter fill fields (Tab) · Ctrl+Enter copy"
+          : activeTransformLabel
+            ? `Enter ${enterAction} as ${activeTransformLabel} · Tab next`
+            : [
+                `Enter ${enterAction}`,
+                "Ctrl+Enter copy",
+                "Ctrl+P pin",
+                options.length > 0 ? "Tab transform" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
   // Search puts pins first; split them out only for the plain recent list.
   const showSections = !query.trim() && results[0]?.isPinned === true;
   const firstRecent = showSections ? results.findIndex((r) => !r.isPinned) : -1;
@@ -709,20 +779,18 @@ export function CommandPalette() {
             {error}
           </p>
         )}
+        {notice && !error && (
+          <p
+            role="status"
+            className="shrink-0 border-t border-line bg-hover px-3 py-1.5 text-[10.5px] text-fg-secondary"
+          >
+            {notice}
+          </p>
+        )}
 
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line px-3 py-2 text-[10px] text-fg-faint">
-          <span className="truncate">
-            {!directPaste
-              ? "Enter copy · enable Direct paste in Settings"
-              : tab === "gif"
-                ? "Enter paste GIF · Shift+Enter copy link · Ctrl+Enter copy"
-                : tab !== "clipboard"
-                  ? "Enter paste · Shift+Enter type (keeps clipboard) · Ctrl+Enter copy"
-                  : picked.length > 1
-                    ? "Enter merge · Shift+Enter fill fields (Tab)"
-                    : activeTransformLabel
-                      ? `Enter paste as ${activeTransformLabel} · Tab next`
-                      : "Enter paste · Tab transform · Ctrl+Space pick"}
+          <span className="truncate" title={footerTitle}>
+            {footerHint}
           </span>
           <span className="shrink-0 font-mono text-fg-muted">
             Alt+C · {dockHotkey}

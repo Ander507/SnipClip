@@ -32,6 +32,7 @@ import { displayUrl, isLinkItem, linkHrefFromText } from "../lib/urls";
 import {
   ActionButton,
   MetaLine,
+  REVEAL_ON_HOVER,
   ROW_METRICS,
   TypeIcon,
   coverEdge,
@@ -151,6 +152,8 @@ export function ClipboardItemRow({
   const imageKind = item.contentType === "screenshot" ? "Screenshot" : "Image";
   const imageName =
     item.preview && !item.preview.startsWith("data:") ? item.preview : imageKind;
+  // The type tag is redundant when the primary line already says "Screenshot" / "Image".
+  const showType = !isVideo && !(isImage && imageName === imageKind);
 
   return (
     <div
@@ -181,55 +184,59 @@ export function ClipboardItemRow({
         />
       )}
 
-      {isImage || isVideo ? (
-        <div
-          className="relative shrink-0 cursor-pointer overflow-hidden rounded-md border border-line bg-inset"
-          style={{ width: m.thumbW, height: m.thumbH }}
-          title={isVideo ? "Play" : "Open"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPreviewImage();
-          }}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          {(isImage ? thumb : poster.src) ? (
-            <img
-              src={(isImage ? thumb : poster.src) ?? undefined}
-              alt=""
-              draggable={false}
-              decoding="async"
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-fg-muted">
-              {isVideo ? <Film size={14} /> : <TypeIcon type={item.contentType} />}
-            </div>
-          )}
-          {isVideo && (
-            <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white">
-                <Play size={10} fill="currentColor" />
+      {/* One fixed-width lead column for every card type, so content lines up down the list. */}
+      <div className="flex shrink-0 justify-center" style={{ width: m.leadW }}>
+        {isImage || isVideo ? (
+          <button
+            type="button"
+            className="relative block shrink-0 cursor-pointer overflow-hidden rounded-md border border-line bg-inset"
+            style={{ width: m.thumbW, height: m.thumbH }}
+            title={isVideo ? "Play" : "Open"}
+            aria-label={isVideo ? "Play" : "Open"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPreviewImage();
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            {(isImage ? thumb : poster.src) ? (
+              <img
+                src={(isImage ? thumb : poster.src) ?? undefined}
+                alt=""
+                draggable={false}
+                loading="lazy"
+                decoding="async"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-fg-muted">
+                {isVideo ? <Film size={14} /> : <TypeIcon type={item.contentType} />}
               </span>
-            </span>
-          )}
-        </div>
-      ) : (
-        <div
-          className={clsx(
-            "flex shrink-0 items-center justify-center rounded-md border border-line bg-muted text-fg-muted",
-            m.iconBox
-          )}
-        >
-          <TypeIcon type={item.contentType} isCode={isCode} />
-        </div>
-      )}
+            )}
+            {isVideo && (
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white">
+                  <Play size={10} fill="currentColor" />
+                </span>
+              </span>
+            )}
+          </button>
+        ) : (
+          <div
+            className={clsx(
+              "flex shrink-0 items-center justify-center rounded-md border border-line bg-muted text-fg-muted",
+              m.iconBox
+            )}
+          >
+            <TypeIcon type={item.contentType} isCode={isCode} />
+          </div>
+        )}
+      </div>
 
       <div className="min-w-0 flex-1 pr-2">
         {isImage ? (
-          <p className="truncate text-xs font-medium text-fg-secondary">
+          <p className="truncate text-xs font-medium text-fg-secondary" title={imageName}>
             {imageName}
-            {source && <span className="font-normal text-fg-muted"> from {source}</span>}
-            {dims && <span className="font-normal text-fg-muted"> · {dims}</span>}
           </p>
         ) : isVideo ? (
           <p className="truncate text-xs font-medium text-fg-secondary">
@@ -245,7 +252,7 @@ export function ClipboardItemRow({
               <button
                 type="button"
                 title="Copy result"
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition hover:brightness-110"
+                className="inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md border border-accent/30 bg-accent-soft px-2 py-1 text-[11px] font-medium text-accent transition hover:brightness-110"
                 onClick={(e) => {
                   e.stopPropagation();
                   onCopyMathResult?.();
@@ -295,7 +302,7 @@ export function ClipboardItemRow({
           <button
             type="button"
             title={href}
-            className="flex max-w-full items-center gap-1.5 truncate text-left text-xs font-medium text-accent hover:underline"
+            className="flex min-w-0 max-w-full items-center gap-1.5 rounded-sm text-left text-xs font-medium text-accent hover:underline"
             onClick={(e) => {
               e.stopPropagation();
               onOpenLink(href);
@@ -310,14 +317,14 @@ export function ClipboardItemRow({
         )}
 
         <MetaLine
-          className="mt-1"
+          className={m.metaGap}
           parts={[
             isVideo && {
               key: "file",
               shrink: true,
               node: <span className="min-w-0 truncate font-mono">{videoFileName(item)}</span>,
             },
-            !isImage && !isVideo && {
+            showType && {
               key: "type",
               node: (
                 <span className="font-mono uppercase tracking-wider text-fg-muted">{typeTag}</span>
@@ -335,7 +342,7 @@ export function ClipboardItemRow({
                 </time>
               ),
             },
-            !isImage && !isVideo && source
+            !isVideo && source
               ? {
                   key: "source",
                   shrink: true,
@@ -344,18 +351,21 @@ export function ClipboardItemRow({
                       className="flex min-w-0 items-center gap-1 text-fg-muted"
                       title={`Copied from ${item.sourceApp}`}
                     >
-                      <AppWindow size={9} className="shrink-0" />
+                      <AppWindow size={10} className="shrink-0" />
                       <span className="truncate">{source}</span>
                     </span>
                   ),
                 }
               : null,
             chars ? { key: "chars", node: <span className="font-mono">{chars}</span> } : null,
+            dims && !isVideo
+              ? { key: "dims", node: <span className="font-mono tabular-nums">{dims}</span> }
+              : null,
             item.isPinned && {
               key: "pinned",
               node: (
                 <span className="inline-flex items-center gap-0.5 text-accent">
-                  <Pin size={9} /> Pinned
+                  <Pin size={10} /> Pinned
                 </span>
               ),
             },
@@ -366,9 +376,7 @@ export function ClipboardItemRow({
       <div
         className={clsx(
           "flex shrink-0 items-center gap-1 transition-opacity",
-          editing || selected
-            ? "opacity-100"
-            : "opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100"
+          editing || selected ? "opacity-100" : REVEAL_ON_HOVER
         )}
         onDoubleClick={(e) => e.stopPropagation()}
       >

@@ -201,17 +201,6 @@ html[data-glass="true"] .bg-hover {
   -webkit-backdrop-filter: none !important;
 }
 
-/* Media viewer — same rule as the snip editor: no glass behind video/canvas */
-[data-media-viewer],
-[data-media-viewer] .bg-raised,
-[data-media-viewer] .bg-app,
-[data-media-viewer] .bg-muted,
-[data-media-viewer] .bg-inset,
-[data-media-viewer] .bg-hover {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
 /* Snipper window — fully transparent so the desktop shows through */
 html.snip-mode,
 html.snip-mode body,
@@ -361,10 +350,15 @@ input[type="checkbox"] {
   }
 }
 
-/* Keyboard focus ring, main window only (base layer so outline-none utilities still win) */
+/*
+ * Keyboard focus ring: the one definition for every interactive element in the main window
+ * (cards, tiles, icon buttons, links, inputs). Base layer, so a component's own `outline-none`
+ * utility still wins; frameless windows (popup, snip, recorder, video editor) are excluded.
+ */
 @layer base {
-  html:not(.popup-mode):not(.snip-mode):not(.video-editor-mode) :focus-visible {
+  html:not(.popup-mode):not(.snip-mode):not(.recorder-mode):not(.video-editor-mode)
+    :focus-visible {
     outline: 2px solid var(--sc-accent);
-    outline-offset: 1px;
+    outline-offset: 2px;
   }
 }

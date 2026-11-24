@@ -10,6 +10,8 @@ import {
   X,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useAppStatus } from "../lib/status";
+import { StatusPill } from "./StatusPill";
 
 interface Props {
   paused: boolean;
@@ -29,6 +31,7 @@ export function TitleBar({
   onToggleAlwaysOnTop,
 }: Props) {
   const appWindow = getCurrentWindow();
+  const { status, refresh } = useAppStatus();
 
   return (
     <header
@@ -55,6 +58,13 @@ export function TitleBar({
       </div>
 
       <div className="no-drag flex h-full items-center">
+        <StatusPill
+          status={status}
+          clipboardPaused={paused}
+          compact={compactDock}
+          onToggleClipboardPause={onTogglePause}
+          onActed={refresh}
+        />
         <div className="flex items-center gap-0.5">
           <button
             type="button"
@@ -62,16 +72,15 @@ export function TitleBar({
             aria-label={paused ? "Resume clipboard listening" : "Pause clipboard listening"}
             title={paused ? "Resume clipboard listening" : "Pause clipboard listening"}
             className={clsx(
-              "flex h-7 items-center justify-center rounded-md transition-colors",
+              "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
               paused
-                ? "gap-1.5 bg-accent-soft px-2 text-[11px] font-medium text-accent"
-                : "w-7 text-fg-muted hover:bg-hover hover:text-fg"
+                ? "bg-accent-soft text-accent"
+                : "text-fg-muted hover:bg-hover hover:text-fg"
             )}
             onClick={onTogglePause}
             onMouseDown={(e) => e.stopPropagation()}
           >
             {paused ? <Play size={12} /> : <Pause size={13} />}
-            {paused && (compactDock ? "Paused" : "Clipboard paused")}
           </button>
           <button
             type="button"

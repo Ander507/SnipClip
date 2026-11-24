@@ -77,7 +77,25 @@ export type PasteResult = {
   typed: boolean;
   count: number;
   transform: string | null;
+  /** A paste was asked for but no safe app was tracked: copied only, nothing was hidden. */
+  fallbackCopy?: boolean;
 };
+
+/** The app Enter would paste into. Null when nothing safe is tracked (gone, hidden, desktop, us). */
+export type PasteTarget = {
+  title: string;
+  exe: string | null;
+  /** Short display name, e.g. "Visual Studio Code". */
+  name: string;
+};
+
+/** Status line for a paste that fell back to a plain copy. */
+export const NO_PASTE_TARGET_MESSAGE = "Copied — no app to paste into";
+
+/** Which app a paste would land in right now (re-validated on every call, never cached). */
+export function pasteTargetInfo(): Promise<PasteTarget | null> {
+  return invoke("paste_target_info");
+}
 
 /** Hide SnipClip, restore previous app, Ctrl+V (or Unicode type-out). */
 export function pasteItem(

@@ -5,7 +5,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Copy, Film, FolderOpen, Maximize2, Pencil, Pin, Play, ScanText, Trash2 } from "lucide-react";
 import type { ClipboardItem } from "../lib/types";
-import { THUMB_PX, type ThumbSize } from "../lib/uiPrefs";
+import type { ThumbSize } from "../lib/uiPrefs";
 import { detectLanguage } from "../lib/codeDetect";
 import { dimensionsLabel, sourceLabel } from "../lib/itemMeta";
 import { parseMathContent } from "../lib/mathContent";
@@ -16,9 +16,10 @@ import {
   ActionButton,
   HEADER_HEIGHT,
   LIST_PAD_Y,
+  REVEAL_ON_HOVER,
   SectionHeader,
   TypeIcon,
-  coverEdge,
+  containEdge,
   formatDuration,
   groupItems,
   imageFallback,
@@ -30,8 +31,33 @@ import {
 
 const GAP = 12;
 const HEADER_SHIFT = 4;
-/** Footer (py-1.5 + a 15px line + its top border) plus the tile's own border. */
-const TILE_CHROME_PX = 30;
+/** Footer (fixed `h-8`, top border included) plus the tile's own 1px border top and bottom. */
+const TILE_CHROME_PX = 34;
+
+/** Tile widths in px: the column count targets `pref`; tiles then fill the row up to `max`. */
+interface TileSpec {
+  min: number;
+  pref: number;
+  max: number;
+}
+const CLIP_TILE: TileSpec = { min: 240, pref: 280, max: 340 };
+const IMAGE_TILE: TileSpec = { min: 180, pref: 220, max: 280 };
+/** The "Thumbnail size" preference nudges all three bounds; medium is the spec above. */
+const SIZE_SCALE: Record<ThumbSize, number> = { small: 0.85, medium: 1, large: 1.2 };
+
+/**
+ * Columns from the grid's own measured width: `max(1, floor((w + gap) / (pref + gap)))`, tiles
+ * sized to fill, never wider than `max` (then the row stays left-aligned instead of stretching
+ * a lone tile across the window) and never wider than the container itself.
+ */
+export function gridLayout(width: number, spec: TileSpec): { cols: number; tileW: number } {
+  if (width <= 0) return { cols: 1, tileW: spec.pref };
+  // Columns from the MINIMUM tile width, then tiles grow to fill (capped at max):
+  // a 968 px content area fits 3 clips at ~314 px rather than 3 at 280 + slack.
+  const cols = Math.max(1, Math.floor((width + GAP) / (spec.min + GAP)));
+  const fill = Math.floor((width - GAP * (cols - 1)) / cols);
+  return { cols, tileW: Math.min(fill, spec.max) };
+}
 
 interface Props {
   items: ClipboardItem[];
@@ -85,15 +111,33 @@ export function ClipboardGrid({
   // A grid of nothing but clips gets 16:9 posters and wider tiles; mixed grids stay 4:3.
   const wide = useMemo(() => items.length > 0 && items.every(isVideoItem), [items]);
   const ratio = wide ? 9 / 16 : 3 / 4;
-  const minTile = Math.round(THUMB_PX[thumbSize] * (wide ? 1.4 : 1));
-  const cols = Math.max(1, Math.floor((width + GAP) / (minTile + GAP)));
-  const tileW = width > 0 ? Math.floor((width - GAP * (cols - 1)) / cols) : minTile;
-  const tileRowH = Math.round((tileW - 2) * ratio) + TILE_CHROME_PX;
+  const spec = useMemo<TileSpec>(() => {
+    const base = wide ? CLIP_TILE : IMAGE_TILE;
+    const k = SIZE_SCALE[thumbSize] ?? 1;
+    return {
+      min: Math.round(base.min * k),
+      pref: Math.round(base.pref * k),
+      max: Math.round(base.max * k),
+    };
+  }, [wide, thumbSize]);
+  const { cols, tileW } = gridLayout(width, spec);
+  // Explicit pixel height (not an aspect-ratio class) so the virtualizer estimate is exact.
+  const thumbH = Math.round((tileW - 2) * ratio);
+  const tileRowH = thumbH + TILE_CHROME_PX;
   const today = new Date(now).toDateString();
 
   const rows = useMemo(() => {
     const out: GridRow[] = [];
-    for (const group of groupItems(items, groupByDay, now)) {
+    // Media flows as one continuous grid: per-day rows left a wide window showing one
+    // tile per row when each day held only a few shots. Pinned keeps its own section;
+    // tiles outside a day group show their relative date in the caption instead.
+    const byDay = groupItems(items, groupByDay, now);
+    const pinned = byDay.filter((g) => !g.dated);
+    const rest = byDay.filter((g) => g.dated).flatMap((g) => g.items);
+    const groups = rest.length
+      ? [...pinned, { key: "recent", label: pinned.length ? "Recent" : null, dated: false, items: rest }]
+      : pinned;
+    for (const group of groups) {
       if (group.label) out.push({ kind: "header", key: `h:${group.key}`, label: group.label });
       for (let i = 0; i < group.items.length; i += cols) {
         out.push({
@@ -131,22 +175,41 @@ export function ClipboardGrid({
     gap: GAP,
   });
 
-  // Arrow Up/Down move by one visual row (same column), across day headers. Capture phase so
-  // it runs before App's one-item-sideways handler.
-  const nav = useRef({ rows, rowIndexById, selectedId, onSelect });
-  nav.current = { rows, rowIndexById, selectedId, onSelect };
+  // Tiles in reading order, across groups, for Left/Right.
+  const flatItems = useMemo(
+    () => rows.flatMap((row) => (row.kind === "tiles" ? row.items : [])),
+    [rows]
+  );
+
+  // Arrow Up/Down move by one visual row (same column), across day headers; Left/Right move by
+  // one tile (clamped, crossing rows). Capture phase so it runs before App's handler.
+  const nav = useRef({ rows, rowIndexById, flatItems, selectedId, onSelect });
+  nav.current = { rows, rowIndexById, flatItems, selectedId, onSelect };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (!horizontal && e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
       // Leave arrows to text fields, selects and sliders; only the main search box keeps grid nav
       // (identified by its placeholder, since SearchBar owns the element).
       const t = e.target as HTMLElement | null;
       if (t?.tagName === "TEXTAREA" || t?.tagName === "SELECT" || t?.isContentEditable) return;
       if (t?.tagName === "INPUT" && !(t as HTMLInputElement).placeholder.startsWith("Search clips")) return;
+      // In the search box Left/Right belong to the caret as soon as there is a query.
+      if (horizontal && t?.tagName === "INPUT" && (t as HTMLInputElement).value !== "") return;
       if (document.querySelector("[data-media-viewer],[data-snip-editor]")) return;
-      const { rows: r, rowIndexById: byId, selectedId: sel, onSelect: select } = nav.current;
+      const { rows: r, rowIndexById: byId, flatItems: flat, selectedId: sel, onSelect: select } =
+        nav.current;
       if (sel == null) return;
+      if (horizontal) {
+        const at = flat.findIndex((it) => it.id === sel);
+        if (at < 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const to = flat[Math.min(flat.length - 1, Math.max(0, at + (e.key === "ArrowRight" ? 1 : -1)))];
+        if (to && to.id !== sel) select(to.id);
+        return;
+      }
       const rowIndex = byId.get(sel);
       const current = rowIndex == null ? undefined : r[rowIndex];
       if (rowIndex == null || current?.kind !== "tiles") return;
@@ -185,7 +248,7 @@ export function ClipboardGrid({
   return (
     <div
       ref={parentRef}
-      className="min-h-0 flex-1 overflow-y-auto px-4"
+      className="min-h-0 flex-1 overflow-y-auto px-4 [scrollbar-gutter:stable]"
       role="listbox"
       aria-label="Clipboard history"
     >
@@ -211,8 +274,8 @@ export function ClipboardGrid({
                 <SectionHeader label={row.label} />
               ) : (
                 <div
-                  className="grid"
-                  style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: GAP }}
+                  className="grid justify-start"
+                  style={{ gridTemplateColumns: `repeat(${cols}, ${tileW}px)`, gap: GAP }}
                 >
                   {row.items.map((item) => (
                     <GridTile
@@ -222,7 +285,7 @@ export function ClipboardGrid({
                       now={now}
                       underDayHeader={row.dated}
                       tileW={tileW}
-                      ratio={ratio}
+                      thumbH={thumbH}
                       ocrAvailable={ocrAvailable}
                       onSelect={() => onSelect(item.id)}
                       onCopy={() => onCopy(item.id)}
@@ -263,7 +326,7 @@ interface TileProps {
   now: number;
   underDayHeader: boolean;
   tileW: number;
-  ratio: number;
+  thumbH: number;
   ocrAvailable: boolean;
   onSelect: () => void;
   onCopy: () => void;
@@ -280,7 +343,7 @@ function GridTile({
   now,
   underDayHeader,
   tileW,
-  ratio,
+  thumbH,
   ocrAvailable,
   onSelect,
   onCopy,
@@ -295,7 +358,7 @@ function GridTile({
   const frameW = tileW - 2;
   const src = useItemThumbnail(
     item.id,
-    coverEdge(item, frameW, Math.round(frameW * 0.75)),
+    containEdge(item, frameW, thumbH),
     imageFallback(item),
     isImage
   );
@@ -325,7 +388,7 @@ function GridTile({
       aria-selected={selected}
       aria-label={[kind, dims, source && `from ${source}`, time].filter(Boolean).join(", ")}
       className={clsx(
-        "group relative cursor-pointer overflow-hidden rounded-xl border bg-raised transition-colors",
+        "group relative min-w-0 cursor-pointer overflow-hidden rounded-xl border bg-raised transition-colors",
         selected
           ? "border-accent ring-2 ring-accent/50"
           : "border-line hover:border-line-strong hover:bg-hover"
@@ -345,19 +408,16 @@ function GridTile({
         setHovering(false);
       }}
     >
-      <div
-        className={clsx(
-          "relative w-full overflow-hidden bg-inset",
-          ratio < 0.7 ? "aspect-video" : "aspect-[4/3]"
-        )}
-      >
+      {/* Fixed-height frame on a subtle inset surface; media is shown whole (no cropping). */}
+      <div className="relative w-full overflow-hidden bg-inset" style={{ height: thumbH }}>
         {isImage && src ? (
           <img
             src={src}
             alt=""
             draggable={false}
+            loading="lazy"
             decoding="async"
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+            className="h-full w-full object-contain"
           />
         ) : isVideo ? (
           poster.src ? (
@@ -365,8 +425,9 @@ function GridTile({
               src={poster.src}
               alt=""
               draggable={false}
+              loading="lazy"
               decoding="async"
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              className="h-full w-full object-contain"
             />
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-fg-muted">
@@ -412,7 +473,7 @@ function GridTile({
                 "absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white transition hover:bg-black/75",
                 selected
                   ? "opacity-100"
-                  : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
               )}
               onClick={(e) => {
                 e.stopPropagation();
@@ -428,9 +489,7 @@ function GridTile({
         <div
           className={clsx(
             "absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-md border border-line bg-raised/95 p-0.5 shadow-sm transition-opacity",
-            selected
-              ? "opacity-100"
-              : "opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100"
+            selected ? "opacity-100" : REVEAL_ON_HOVER
           )}
           onDoubleClick={(e) => e.stopPropagation()}
         >
@@ -483,22 +542,26 @@ function GridTile({
         </div>
       </div>
 
-      <div className="flex min-w-0 items-center gap-1.5 border-t border-line px-2 py-1.5 text-[10px] leading-[15px]">
-        {item.isPinned && <Pin size={9} className="shrink-0 text-accent" aria-label="Pinned" />}
+      <div className="flex h-8 min-w-0 items-center gap-2 border-t border-line px-2.5 text-[11px] leading-4">
+        {item.isPinned && <Pin size={11} className="shrink-0 text-accent" aria-label="Pinned" />}
         <time
           dateTime={item.createdAt}
           title={new Date(item.createdAt).toLocaleString()}
-          className="min-w-0 truncate font-mono text-fg-muted"
+          className="min-w-0 truncate font-mono tabular-nums text-fg-muted"
         >
           {time}
         </time>
         {isVideo ? (
-          <span className="ml-auto shrink-0 text-fg-faint">{videoKindLabel(item)}</span>
+          <span className="ml-auto shrink-0 text-fg-muted">{videoKindLabel(item)}</span>
         ) : dims ? (
-          <span className="ml-auto shrink-0 font-mono text-fg-faint">{dims}</span>
+          <span className="ml-auto shrink-0 font-mono tabular-nums text-fg-muted">{dims}</span>
         ) : source ? (
-          <span className="ml-auto min-w-0 truncate text-fg-faint">{source}</span>
-        ) : null}
+          <span className="ml-auto min-w-0 truncate text-fg-muted" title={`Copied from ${item.sourceApp}`}>
+            {source}
+          </span>
+        ) : (
+          <span className="ml-auto shrink-0 text-fg-muted">{kind}</span>
+        )}
       </div>
     </div>
   );
@@ -531,7 +594,7 @@ function HoverPreview({ path, gif }: { path: string; gif: boolean }) {
         src={src}
         alt=""
         draggable={false}
-        className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+        className="pointer-events-none absolute inset-0 h-full w-full bg-inset object-contain"
       />
     );
   }
@@ -546,7 +609,7 @@ function HoverPreview({ path, gif }: { path: string; gif: boolean }) {
         playsInline
         preload="auto"
         className={clsx(
-          "pointer-events-none absolute inset-0 h-full w-full object-cover transition-opacity duration-200",
+          "pointer-events-none absolute inset-0 h-full w-full bg-inset object-contain transition-opacity duration-200",
           playing ? "opacity-100" : "opacity-0"
         )}
         onPlaying={() => setPlaying(true)}

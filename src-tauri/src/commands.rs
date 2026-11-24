@@ -164,6 +164,13 @@ pub fn paste_item(
     paste_items(app, db, vec![id], mode, transform, None)
 }
 
+/// The app Enter would paste into (title, exe, short name), or None when nothing safe is
+/// tracked: the window is gone, hidden, one of ours, or the desktop / taskbar.
+#[tauri::command]
+pub fn paste_target_info(app: AppHandle) -> Option<crate::paste::PasteTargetInfo> {
+    crate::paste::paste_target_info(&app)
+}
+
 /// Paste several clips at once — merged into one paste, or walked through
 /// form fields with Tab / Enter between them.
 #[tauri::command]

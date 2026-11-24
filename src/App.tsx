@@ -34,11 +34,14 @@ import {
   openVideoEditor,
   getCategoryCounts,
   pasteItem,
+  pasteTargetInfo,
+  NO_PASTE_TARGET_MESSAGE,
   updateSettings,
   isOcrAvailable,
   beginRecord,
   saveReplayClip,
 } from "./lib/api";
+import type { PasteTarget } from "./lib/api";
 import {
   AlertCircle,
   Aperture,
@@ -79,13 +82,51 @@ import {
 
 function Hint({ k, children }: { k: string; children: ReactNode }) {
   return (
-    <span className="flex items-center gap-1">
-      <kbd className="rounded border border-line bg-muted px-1 font-mono text-[10px] text-fg-muted">
+    <span className="flex min-w-0 items-center gap-1">
+      <kbd className="shrink-0 rounded border border-line bg-muted px-1 font-mono text-[10px] text-fg-muted">
         {k}
       </kbd>
-      {children}
+      <span className="min-w-0 max-w-[15rem] truncate">{children}</span>
     </span>
   );
+}
+
+/** Sidebar count keys an item is tallied under (mirrors db.rs category_counts). */
+function countKeysFor(item: ClipboardItem): string[] {
+  const keys = ["all"];
+  switch (item.contentType) {
+    case "text":
+    case "translated":
+      keys.push("text");
+      break;
+    case "image":
+      keys.push("images");
+      break;
+    case "screenshot":
+      keys.push("screenshots");
+      break;
+    case "video":
+    case "gif":
+      keys.push("videos");
+      break;
+    case "link":
+      keys.push("links");
+      break;
+    case "math":
+      keys.push("math");
+      break;
+  }
+  if (item.isPinned) keys.push("pinned");
+  return keys;
+}
+
+/** Counts as they will read once `item` is gone: used while a delete waits on its Undo. */
+function countsWithout(counts: Record<string, number>, item: ClipboardItem): Record<string, number> {
+  const next = { ...counts };
+  for (const key of countKeysFor(item)) {
+    if (key in next) next[key] = Math.max(0, next[key] - 1);
+  }
+  return next;
 }
 
 interface ScreenshotEditorRequest {
@@ -121,7 +162,9 @@ function App() {
   const [uiPreview, setUiPreview] = useState<UiPrefs | null>(null);
   const ui = uiPreview ?? settings.uiPrefs;
   // Deleted rows wait here a few seconds so the toast can offer Undo
-  const pendingDeleteRef = useRef<{ id: number; timer: number } | null>(null);
+  const pendingDeleteRef = useRef<{ id: number; timer: number; item?: ClipboardItem } | null>(null);
+  // The app Enter would paste into (null = nothing safe, Enter only copies)
+  const [pasteTarget, setPasteTarget] = useState<PasteTarget | null>(null);
   const categoryRef = useRef(category);
   categoryRef.current = category;
   const debouncedQueryRef = useRef(debouncedQuery);
@@ -166,7 +209,10 @@ function App() {
 
   const refreshCounts = useCallback(async () => {
     try {
-      setCounts(await getCategoryCounts());
+      const fresh = await getCategoryCounts();
+      // A delete still inside its Undo window is already gone from the list: keep it out of the badges
+      const pending = pendingDeleteRef.current?.item;
+      setCounts(pending ? countsWithout(fresh, pending) : fresh);
     } catch (err) {
       console.error(err);
       loadFailedRef.current = true;
@@ -191,6 +237,32 @@ function App() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Which app Enter pastes into. Re-read when the window is shown or focused (no polling):
+  // the backend remembers the app you were in before SnipClip came forward.
+  const refreshPasteTarget = useCallback(async () => {
+    try {
+      setPasteTarget(await pasteTargetInfo());
+    } catch {
+      setPasteTarget(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPasteTarget();
+    const onShown = () => {
+      if (document.visibilityState === "hidden") return;
+      void refreshPasteTarget();
+      // the popup can pin / clear while this window is in the background
+      void refreshCounts();
+    };
+    window.addEventListener("focus", onShown);
+    document.addEventListener("visibilitychange", onShown);
+    return () => {
+      window.removeEventListener("focus", onShown);
+      document.removeEventListener("visibilitychange", onShown);
+    };
+  }, [refreshPasteTarget, refreshCounts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -288,6 +360,12 @@ function App() {
 
     void listen<boolean>("clipboard-paused", (event) => {
       setClipboardPaused(Boolean(event.payload));
+    }).then(keep);
+
+    // The popup pinned or cleared something: order and sidebar badges both change
+    void listen("library-changed", () => {
+      void refreshRef.current();
+      void refreshCounts();
     }).then(keep);
 
     void listen<{ lineCount?: number; preview?: string; charCount?: number }>("ocr-extracted", (event) => {
@@ -442,13 +520,13 @@ function App() {
     }
   }
 
-  async function handleCopy(id: number) {
+  async function handleCopy(id: number, message?: string) {
     try {
       const item = items.find((i) => i.id === id);
       await copyItem(id);
       setStatus(
-        item?.contentType === "translated" ? "Copied translation" : "Copied",
-        1200,
+        message ?? (item?.contentType === "translated" ? "Copied translation" : "Copied"),
+        message ? 2000 : 1200,
         { tone: "success" }
       );
     } catch (err) {
@@ -472,6 +550,12 @@ function App() {
         setStatus("Copied", 1200, { tone: "success" });
         return;
       }
+      if (result.fallbackCopy) {
+        // the tracked app vanished between the hint and the keypress
+        setStatus(NO_PASTE_TARGET_MESSAGE, 2000, { tone: "success" });
+        void refreshPasteTarget();
+        return;
+      }
       const where = result.targetTitle?.trim();
       setStatus(
         where
@@ -486,6 +570,29 @@ function App() {
       setStatus(String(err), 2400, { tone: "error" });
     }
   }
+
+  /**
+   * Enter: paste into the verified previous app, else copy and say so. The target is
+   * re-checked here (not trusted from the hint) so a closed app never gets a blind Ctrl+V.
+   */
+  async function handleEnterAction(id: number, typeOut = false) {
+    let target: PasteTarget | null = null;
+    if (settings.directPasteEnabled) {
+      try {
+        target = await pasteTargetInfo();
+      } catch {
+        target = null;
+      }
+      setPasteTarget(target);
+    }
+    if (!target) {
+      await handleCopy(id, settings.directPasteEnabled ? NO_PASTE_TARGET_MESSAGE : undefined);
+      return;
+    }
+    await handlePaste(id, typeOut ? "typeOut" : "paste");
+  }
+  const handleEnterActionRef = useRef(handleEnterAction);
+  handleEnterActionRef.current = handleEnterAction;
 
   async function handleCopyOriginal(id: number) {
     try {
@@ -644,14 +751,16 @@ function App() {
   async function handlePin(id: number) {
     try {
       await togglePin(id);
-      await refresh();
-      await refreshCounts();
+      // badges and list together: Pinned and the item's own tab both move
+      await Promise.all([refresh(), refreshCounts()]);
     } catch (err) {
       setStatus(String(err), 2400, { tone: "error" });
-      await refresh();
-      await refreshCounts();
+      await Promise.all([refresh(), refreshCounts()]);
     }
   }
+
+  const handlePinRef = useRef(handlePin);
+  handlePinRef.current = handlePin;
 
   /** Run the delete that's waiting on its Undo window (or nothing). */
   const commitPendingDelete = useCallback(() => {
@@ -664,6 +773,7 @@ function App() {
       .catch((err) => {
         setStatus(String(err), 2400, { tone: "error" });
         void refreshRef.current();
+        void refreshCounts();
       });
   }, [refreshCounts, setStatus]);
 
@@ -685,8 +795,10 @@ function App() {
     setItems((prev) => prev.filter((i) => i.id !== id));
     setSelectedId((cur) => (cur === id ? neighbor?.id ?? null : cur));
     const timer = window.setTimeout(commitPendingDelete, 5000);
-    pendingDeleteRef.current = { id, timer };
     const removed = list[idx];
+    pendingDeleteRef.current = { id, timer, item: removed };
+    // The row is gone now, so the sidebar badges drop now too (not 5 s later, when it commits)
+    if (removed) setCounts((prev) => countsWithout(prev, removed));
     const keepsFile = removed?.contentType === "video" || removed?.contentType === "gif";
     setStatus(keepsFile ? "Removed from library · file kept" : "Deleted", 5000, {
       action: {
@@ -697,6 +809,7 @@ function App() {
           window.clearTimeout(pending.timer);
           pendingDeleteRef.current = null;
           setStatus(null);
+          void refreshCounts(); // the row is back: so are its counts
           void refresh().then(() => setSelectedId(id));
         },
       },
@@ -730,6 +843,7 @@ You can restore it from the Recycle Bin.`,
     const neighbor = list[idx + 1] ?? list[idx - 1] ?? null;
     setItems((prev) => prev.filter((i) => i.id !== id));
     setSelectedId((cur) => (cur === id ? neighbor?.id ?? null : cur));
+    setCounts((prev) => countsWithout(prev, item));
     await new Promise((r) => window.setTimeout(r, 200));
     try {
       const fileName = await deleteItemFile(id);
@@ -738,6 +852,7 @@ You can restore it from the Recycle Bin.`,
     } catch (err) {
       setStatus(String(err), 3200, { tone: "error" });
       void refreshRef.current();
+      void refreshCounts(); // the optimistic drop is wrong now: take the real numbers
     }
   }
 
@@ -774,7 +889,7 @@ You can restore it from the Recycle Bin.`,
   async function handleUpdateItem(id: number, content: string) {
     try {
       await updateClipboardItem(id, content);
-      await refresh();
+      await Promise.all([refresh(), refreshCounts()]);
       setStatus("Snippet updated", 1200, { tone: "success" });
     } catch (err) {
       setStatus(String(err), 2400, { tone: "error" });
@@ -974,17 +1089,35 @@ You can restore it from the Recycle Bin.`,
       // Enter in the search field acts on the top hit, so "type, Enter" copies it
       const inSearch = e.target === searchRef.current;
 
+      // Ctrl+F focuses and selects the search text from anywhere (also stops WebView2's find bar)
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+        return;
+      }
+
+      // Ctrl+P pins the selected item from anywhere, typing in the search box included
+      // (and never opens the webview print dialog). Plain P below still works outside inputs.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        if (selectedIdRef.current != null) void handlePinRef.current(selectedIdRef.current);
+        return;
+      }
+
       if (e.key === "/" && !inInput) {
         e.preventDefault();
         searchRef.current?.focus();
         return;
       }
 
+      // Native text editing (Ctrl+A/C/V/X/Z, Home/End, Shift+arrows, caret moves) stays with
+      // the field: only Enter in the search box, Esc and plain Up/Down are ours there.
+      const navMod = e.ctrlKey || e.altKey || e.metaKey || e.shiftKey;
       if (
         inInput &&
         e.key !== "Escape" &&
-        e.key !== "ArrowDown" &&
-        e.key !== "ArrowUp" &&
+        !((e.key === "ArrowDown" || e.key === "ArrowUp") && !navMod) &&
         !(e.key === "Enter" && inSearch && !e.isComposing)
       ) {
         return;
@@ -1028,27 +1161,15 @@ You can restore it from the Recycle Bin.`,
           setSelectedId(hit.id);
         }
       }
-      if (e.key === "Enter" && enterOk && enterId != null) {
+      // One standard with the popup: Enter pastes into the verified previous app (else copies),
+      // Ctrl+Enter only copies, Shift+Enter types it out.
+      if (e.key === "Enter" && enterOk && enterId != null && !e.isComposing) {
         e.preventDefault();
         const id = enterId;
-        const canPaste = settings.directPasteEnabled;
-        if (e.shiftKey) {
-          if (canPaste) void handlePaste(id, "typeOut");
-          else void handleCopy(id);
-        } else if (e.ctrlKey || e.metaKey) {
-          if (canPaste) {
-            if (settings.compactDock) {
-              void handlePaste(id, "copyOnly");
-            } else {
-              void handlePaste(id, "paste");
-            }
-          } else {
-            void handleCopy(id);
-          }
-        } else if (settings.compactDock && canPaste) {
-          void handlePaste(id, "paste");
-        } else {
+        if (e.ctrlKey || e.metaKey) {
           void handleCopy(id);
+        } else {
+          void handleEnterActionRef.current(id, e.shiftKey);
         }
       }
 
@@ -1074,7 +1195,7 @@ You can restore it from the Recycle Bin.`,
 
       if ((e.key === "p" || e.key === "P") && plainOk && !inInput && selectedIdRef.current != null) {
         e.preventDefault();
-        void handlePin(selectedIdRef.current);
+        void handlePinRef.current(selectedIdRef.current);
       }
 
       // Digit keys jump to the Nth visible library tab
@@ -1106,6 +1227,11 @@ You can restore it from the Recycle Bin.`,
     settings.compactDock,
     settings.directPasteEnabled,
   ]);
+
+  // Enter hint follows what Enter will really do: paste only when a verified app is tracked
+  const enterAction =
+    settings.directPasteEnabled && pasteTarget ? `paste into ${pasteTarget.name}` : "copy";
+  const enterHint = `Enter ${enterAction}`;
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-app text-fg">
@@ -1239,7 +1365,7 @@ You can restore it from the Recycle Bin.`,
                 {settings.compactDock ? (
                   <p className="mt-2 text-[11px] text-fg-faint">
                     {settings.directPasteEnabled
-                      ? "Pins + last 10 · Enter paste · Shift+Enter type · Ctrl+Enter copy"
+                      ? `Pins + last 10 · ${enterHint} · Shift+Enter type · Ctrl+Enter copy`
                       : "Pins + last 10 · Enter copy · enable Direct paste in Settings"}
                   </p>
                 ) : (
@@ -1252,21 +1378,13 @@ You can restore it from the Recycle Bin.`,
                           : counts[category] ?? dockItems.length}
                       </span>
                     </span>
-                    <div className="hidden items-center gap-3 text-[11px] text-fg-faint min-[820px]:flex">
-                      {mediaTab ? (
-                        <>
-                          <Hint k="Space">view</Hint>
-                          <Hint k="Enter">copy</Hint>
-                          <Hint k="Del">delete</Hint>
-                        </>
-                      ) : (
-                        <>
-                          <Hint k="Enter">copy</Hint>
-                          {settings.directPasteEnabled && <Hint k="Ctrl+Enter">paste</Hint>}
-                          <Hint k="P">pin</Hint>
-                          <Hint k="Del">delete</Hint>
-                        </>
-                      )}
+                    <div className="hidden min-w-0 items-center gap-3 whitespace-nowrap text-[11px] text-fg-faint min-[820px]:flex">
+                      {mediaTab && <Hint k="Space">view</Hint>}
+                      <Hint k="Enter">{enterAction}</Hint>
+                      {/* Only worth showing when Enter pastes; otherwise both keys just copy. */}
+                      {enterAction !== "copy" && <Hint k="Ctrl+Enter">copy</Hint>}
+                      <Hint k="Ctrl+P">pin</Hint>
+                      <Hint k="Del">remove</Hint>
                       {clipboardPaused && <span>listening paused</span>}
                     </div>
                   </div>
@@ -1313,7 +1431,7 @@ You can restore it from the Recycle Bin.`,
                 onSelect={setSelectedId}
                 onCopy={(id) =>
                   void (settings.compactDock && settings.directPasteEnabled
-                    ? handlePaste(id, "paste")
+                    ? handleEnterAction(id)
                     : handleCopy(id))
                 }
                 onCopyOriginal={(id) => void handleCopyOriginal(id)}

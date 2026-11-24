@@ -54,6 +54,19 @@ pub struct PasteResult {
     pub typed: bool,
     pub count: usize,
     pub transform: Option<String>,
+    /// A paste was requested but there was no safe app to paste into, so the clip was only
+    /// copied and no window was hidden. The UI should say so instead of claiming a paste.
+    pub fallback_copy: bool,
+}
+
+/// The app a paste would land in, as shown in the "Enter paste into <app>" hint.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PasteTargetInfo {
+    pub title: String,
+    pub exe: Option<String>,
+    /// Short display name derived from the title / exe (e.g. "Visual Studio Code").
+    pub name: String,
 }
 
 fn last_title_slot() -> &'static Mutex<String> {
@@ -88,20 +101,186 @@ pub fn capture_target_now(app: &AppHandle) {
 
 #[cfg(windows)]
 fn remember_foreign_foreground(app: &AppHandle) {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindow};
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
     let fg = unsafe { GetForegroundWindow() };
     if fg.0.is_null() {
         return;
     }
-    if is_snipclip_hwnd(app, fg) {
-        return;
-    }
-    if !unsafe { IsWindow(Some(fg)) }.as_bool() {
+    // The taskbar, desktop and our own windows never replace the remembered app
+    if !is_pastable_target(app, fg) {
         return;
     }
     LAST_TARGET.store(fg.0 as isize, Ordering::SeqCst);
     *last_title_slot().lock() = window_title(fg);
+}
+
+/// A window we may paste into: it exists, is visible, is not one of ours and is not the
+/// desktop / taskbar / shell flyouts.
+#[cfg(windows)]
+fn is_pastable_target(app: &AppHandle, hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+    };
+
+    if hwnd.0.is_null() || !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        return false;
+    }
+    if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+        return false;
+    }
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    // Any window of this process (file dialogs, toasts, ...) is ours, not just the labelled ones
+    if pid == std::process::id() || is_snipclip_hwnd(app, hwnd) {
+        return false;
+    }
+    !is_shell_window_class(&window_class(hwnd))
+}
+
+#[cfg(windows)]
+fn window_class(hwnd: windows::Win32::Foundation::HWND) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    if n <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..n as usize])
+}
+
+/// Executable file name (e.g. `Code.exe`) of the process owning `hwnd`.
+#[cfg(windows)]
+fn window_exe_name(hwnd: windows::Win32::Foundation::HWND) -> Option<String> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+        fn CloseHandle(handle: isize) -> i32;
+        fn QueryFullProcessImageNameW(
+            handle: isize,
+            flags: u32,
+            exe_name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+    }
+
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    if pid == 0 {
+        return None;
+    }
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle == 0 {
+            return None;
+        }
+        let mut buf = [0u16; 520];
+        let mut size = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size);
+        CloseHandle(handle);
+        if ok == 0 || size == 0 {
+            return None;
+        }
+        let path = std::ffi::OsString::from_wide(&buf[..size as usize]);
+        std::path::Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+    }
+}
+
+/// Window classes of the desktop, taskbar and shell flyouts: never a place to paste.
+fn is_shell_window_class(class: &str) -> bool {
+    matches!(
+        class,
+        "Progman"
+            | "WorkerW"
+            | "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "NotifyIconOverflowWindow"
+            | "TopLevelWindowForOverflowXamlIsland"
+            | "XamlExplorerHostIslandWindow"
+            | "Windows.UI.Core.CoreWindow"
+    )
+}
+
+/// "Visual Studio Code" from "paste.rs - SnipClip - Visual Studio Code"; falls back to the
+/// executable name, then the raw title, so the hint always has something short to show.
+fn friendly_app_name(title: &str, exe: Option<&str>) -> String {
+    const MAX: usize = 30;
+    let title = title.trim();
+    if let Some(suffix) = title_suffix(title).filter(|s| s.chars().count() <= MAX) {
+        return suffix.to_string();
+    }
+    if let Some(name) = exe.map(exe_display_name).filter(|s| !s.is_empty()) {
+        return name;
+    }
+    if !title.is_empty() {
+        return title.chars().take(MAX).collect();
+    }
+    "previous app".to_string()
+}
+
+/// Final " - " / en / em dash segment of a window title, when it looks like an app name
+/// (not a path or a file name).
+fn title_suffix(title: &str) -> Option<&str> {
+    // The app name is the last segment, so take the shortest tail over all separators
+    let tail = [" - ", " \u{2013} ", " \u{2014} "]
+        .iter()
+        .filter_map(|sep| title.rsplit_once(sep).map(|(_, tail)| tail.trim()))
+        .min_by_key(|t| t.len())?;
+    let looks_like_file = !tail.contains(' ') && tail.contains('.');
+    if tail.is_empty() || tail.contains(['\\', '/']) || looks_like_file {
+        return None;
+    }
+    Some(tail)
+}
+
+/// `WindowsTerminal.exe` -> "Windows Terminal", `chrome.exe` -> "Chrome".
+fn exe_display_name(exe: &str) -> String {
+    let stem = match exe.len().checked_sub(4).and_then(|at| exe.get(at..)) {
+        Some(ext) if ext.eq_ignore_ascii_case(".exe") => &exe[..exe.len() - 4],
+        _ => exe,
+    };
+    let mut out = String::with_capacity(stem.len() + 2);
+    let mut prev: Option<char> = None;
+    for ch in stem.chars() {
+        let ch = if ch == '_' || ch == '-' { ' ' } else { ch };
+        if ch.is_uppercase() && prev.is_some_and(|p| p.is_lowercase()) {
+            out.push(' ');
+        }
+        out.push(ch);
+        prev = Some(ch);
+    }
+    let out = out.trim().to_string();
+    // all-lowercase exe names ("chrome") read better capitalised
+    if !out.is_empty() && out.chars().all(|c| !c.is_uppercase()) {
+        let mut chars = out.chars();
+        let first: String = chars.next().into_iter().flat_map(char::to_uppercase).collect();
+        return first + chars.as_str();
+    }
+    out
+}
+
+/// The app a paste would go to right now, or None when there is nothing safe to paste into
+/// (no remembered app, it closed, it is hidden, or it is the desktop / taskbar / us).
+pub fn paste_target_info(app: &AppHandle) -> Option<PasteTargetInfo> {
+    #[cfg(windows)]
+    {
+        let hwnd = valid_target_hwnd(app)?;
+        let title = window_title(hwnd);
+        let exe = window_exe_name(hwnd);
+        let name = friendly_app_name(&title, exe.as_deref());
+        Some(PasteTargetInfo { title, exe, name })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        None
+    }
 }
 
 #[cfg(windows)]
@@ -137,20 +316,15 @@ fn window_title(hwnd: windows::Win32::Foundation::HWND) -> String {
 }
 
 #[cfg(windows)]
-fn stored_target_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+fn valid_target_hwnd(app: &AppHandle) -> Option<windows::Win32::Foundation::HWND> {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
     let raw = LAST_TARGET.load(Ordering::SeqCst);
     if raw == 0 {
         return None;
     }
     let hwnd = HWND(raw as *mut _);
-    if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
-        Some(hwnd)
-    } else {
-        None
-    }
+    is_pastable_target(app, hwnd).then_some(hwnd)
 }
 
 /// One clipboard staging step: either a stored item as-is, or transformed text.
@@ -244,6 +418,7 @@ pub fn paste_into_previous(
             typed: false,
             count: payloads.len(),
             transform: transform_label,
+            fallback_copy: false,
         });
     }
 
@@ -260,18 +435,32 @@ pub fn paste_into_previous(
             typed: false,
             count: payloads.len(),
             transform: transform_label,
+            fallback_copy: true,
         });
     }
 
     #[cfg(windows)]
     {
+        // Only ever paste into a verified app. Without one, leave the clip on the clipboard
+        // and keep SnipClip open so the UI can say "Copied — no app to paste into".
+        let Some(target) = valid_target_hwnd(app) else {
+            payloads
+                .first()
+                .ok_or_else(|| "Nothing to copy".to_string())?
+                .stage()?;
+            return Ok(PasteResult {
+                mode: PasteMode::CopyOnly,
+                target_title: String::new(),
+                typed: false,
+                count: payloads.len(),
+                transform: transform_label,
+                fallback_copy: true,
+            });
+        };
+
         hide_snipclip_surfaces(app);
         // let the OS hand focus back before we force the stored HWND
         thread::sleep(Duration::from_millis(45));
-
-        let target = stored_target_hwnd().ok_or_else(|| {
-            "No previous window to paste into — open the popup from another app".to_string()
-        })?;
 
         focus_hwnd(target)?;
         thread::sleep(Duration::from_millis(35));
@@ -316,6 +505,7 @@ pub fn paste_into_previous(
             typed: typed_any,
             count: payloads.len(),
             transform: transform_label,
+            fallback_copy: false,
         };
         let _ = app.emit("paste-done", &result);
         Ok(result)
@@ -654,4 +844,59 @@ fn type_unicode(text: &str) -> Result<(), String> {
         thread::sleep(Duration::from_millis(2));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_classes_are_rejected() {
+        for class in [
+            "Progman",
+            "WorkerW",
+            "Shell_TrayWnd",
+            "Shell_SecondaryTrayWnd",
+            "Windows.UI.Core.CoreWindow",
+        ] {
+            assert!(is_shell_window_class(class), "{class}");
+        }
+        for class in ["Chrome_WidgetWin_1", "Notepad", "CabinetWClass", "ApplicationFrameWindow", ""] {
+            assert!(!is_shell_window_class(class), "{class}");
+        }
+    }
+
+    #[test]
+    fn app_name_comes_from_the_last_title_segment() {
+        assert_eq!(
+            friendly_app_name("paste.rs - SnipClip - Visual Studio Code", Some("Code.exe")),
+            "Visual Studio Code"
+        );
+        assert_eq!(
+            friendly_app_name("Inbox \u{2014} Google Chrome", Some("chrome.exe")),
+            "Google Chrome"
+        );
+        assert_eq!(friendly_app_name("Untitled - Notepad", None), "Notepad");
+    }
+
+    #[test]
+    fn app_name_falls_back_to_exe_then_title() {
+        // a title ending in a file name is not an app name
+        assert_eq!(friendly_app_name("Editing - notes.txt", Some("notepad.exe")), "Notepad");
+        assert_eq!(friendly_app_name("", Some("WindowsTerminal.exe")), "Windows Terminal");
+        assert_eq!(friendly_app_name("Calculator", None), "Calculator");
+        assert_eq!(friendly_app_name("   ", None), "previous app");
+        // overly long tail is not shown
+        let long = format!("a - {}", "x".repeat(60));
+        assert_eq!(friendly_app_name(&long, Some("foo.exe")), "Foo");
+    }
+
+    #[test]
+    fn exe_names_are_prettified() {
+        assert_eq!(exe_display_name("chrome.exe"), "Chrome");
+        assert_eq!(exe_display_name("WindowsTerminal.EXE"), "Windows Terminal");
+        assert_eq!(exe_display_name("notepad++"), "Notepad++");
+        assert_eq!(exe_display_name("Discord.exe"), "Discord");
+        assert_eq!(exe_display_name(".exe"), "");
+    }
 }

@@ -22,6 +22,7 @@ export const SearchBar = forwardRef<HTMLInputElement, Props>(
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
+          aria-keyshortcuts="Control+F /"
           placeholder="Search clips, text, links…"
           className="h-9 w-full rounded-lg border border-line bg-inset pl-9 pr-14 text-[13px] text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent focus:ring-2 focus:ring-accent/25"
         />
@@ -30,7 +31,7 @@ export const SearchBar = forwardRef<HTMLInputElement, Props>(
             aria-hidden="true"
             className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-line bg-muted px-1.5 text-[10px] text-fg-muted"
           >
-            /
+            Ctrl+F
           </kbd>
         )}
         {value && (

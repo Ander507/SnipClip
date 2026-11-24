@@ -21,8 +21,9 @@ import {
 
 /** Rough first-paint heights; real ones come from measuring each row. */
 const TEXT_LINE_PX = 16;
-const META_PX = 19;
-const MATH_BODY_PX = 42;
+/** Meta line (leading-4); the gap above it comes from the density metrics. */
+const META_LINE_PX = 16;
+const MATH_BODY_PX = 46;
 const TRANSLATED_BODY_PX = 35;
 const CHARS_PER_LINE = 60;
 
@@ -144,7 +145,7 @@ function estimateItemHeight(item: ClipboardItem, m: RowMetrics): number {
     content = TEXT_LINE_PX * Math.min(m.lines, Math.max(1, lines));
   }
   // +2 for the card border.
-  return Math.max(lead, content + META_PX) + m.padPx * 2 + 2;
+  return Math.max(lead, content + m.metaGapPx + META_LINE_PX) + m.padPx * 2 + 2;
 }
 
 function ItemRows({
