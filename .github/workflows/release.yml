@@ -53,12 +53,13 @@ jobs:
 
             ### Highlights
 
-            - **Alt+C popup grows tabs:** Clipboard, Emoji, GIFs (KLIPY), Kaomoji and Symbols — searchable, with recents, and the popup is now draggable.
-            - **Your theme loads at launch** and every window follows it; new theme gallery, any accent color, System mode and Mica/Acrylic.
-            - **More customization:** fonts, density, corners, borders, sidebar side / icon-only, image grid, per-tab icons and colors, popup position and size.
-            - **Friendlier vault:** day headers, source app, sharp thumbnails, Undo on delete, Space to preview, and direct paste into the app you came from (opt-in).
+            - **Instant replay (new):** SnipClip can record your screen in the background. Press the replay hotkey to save the last 5 s – 10 min as an mp4 (GPU-encoded, with desktop audio). A small "Clip saved" notice and chime confirm it without pulling you out of a game.
+            - **Watch clips in SnipClip:** a built-in player (scrub, speed, loop, frame step, fullscreen) and image viewer (zoom, pan). The Clips tab shows real thumbnails and lengths.
+            - **Uses your whole window:** media grids fill the available width, and screenshots are shown whole.
+            - **One keyboard rule:** Enter pastes into the app you came from, or copies if that app is gone. Ctrl+Enter copies, Ctrl+F searches, Ctrl+P pins. A title-bar pill shows replay, recording and clipboard status.
+            - **Fixes:** sidebar counts, popup search, hotkeys no longer all break when one is taken, Remove vs Delete file (Recycle Bin), recorder bar Pause, a faster and smaller library.
 
-            **Quick try:** install → copy something → `Ctrl+Shift+D` (or `Alt+C`) → Enter to paste → `Ctrl+Shift+S` / `Ctrl+Shift+R` on any monitor.
+            **Quick try:** Settings → Instant replay → on → play something → press your replay hotkey (default `Alt+F10`; NVIDIA's overlay uses it too, so change it if you use the NVIDIA app).
 
             ### Installation (pick one)
 

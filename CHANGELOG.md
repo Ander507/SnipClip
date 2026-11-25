@@ -2,6 +2,43 @@
 
 All notable changes to SnipClip are documented here.
 
+## [1.8.0] — 2026-11-24
+
+### Instant replay (new)
+
+- **Clip the last moments, Medal-style:** turn on Settings → Instant replay and SnipClip quietly records your screen in the background. Press the replay hotkey to save the last N seconds (5 s – 10 min) as an mp4 in `Videos\SnipClip` and your library.
+- Captures with Desktop Duplication and encodes on the GPU when available (NVIDIA NVENC, AMD AMF, Intel Quick Sync), falling back to x264. Desktop audio is recorded in sync.
+- Choose the length, 30/60 fps, quality, resolution, display and audio.
+- **Save feedback that doesn't interrupt games:** a small "Clip saved" corner notice that never takes focus and never appears in your clips, plus a short chime. Both can be turned off.
+- A title-bar status pill shows "Preparing replay…", "Replay buffering · 23s" and "Replay ready · 60s" (only once the full length is buffered). Click it to save a clip now.
+
+### Watch and browse clips
+
+- **Media viewer:** double-click or Space plays clips inside SnipClip with your own controls: scrub bar, speed, loop, frame step (`,` `.`), volume and fullscreen (F). Images get wheel zoom, pan and double-click for 100% / fit. ← / → step through items.
+- **Clips tab** (formerly Videos): thumbnails show a real frame of each clip, a length badge and a muted preview on hover.
+- **Responsive grids:** Images, Screenshots and Clips use the full window width with as many columns as fit. Screenshots are shown whole, not cropped.
+- **Remove vs delete:** Del removes an item from the library and keeps the file. Shift+Del, or "Delete file" in the viewer, moves the clip to the Recycle Bin after a confirmation.
+
+### Easier everyday use
+
+- **One keyboard rule everywhere:** Enter pastes into the app you came from, but only if that app is still there; otherwise it copies and tells you. Ctrl+Enter copies, Ctrl+F searches, Ctrl+P pins, and ← / → move through grids. The hints show what Enter will actually do ("Enter paste into Notepad").
+- Typing in search and pressing Enter now uses the top result.
+- **Clearer status:** recording (red, with a live timer), recording paused and clipboard paused (amber) show in the title bar, with Resume, Pause and Stop one click away.
+- Clipboard cards put the content first, with type · time · source app · size underneath.
+- Record and "Clip last N s" buttons sit next to search, and each tab has a helpful empty state.
+- Visible focus rings and larger buttons for keyboard and mouse users.
+
+### Fixes
+
+- The sidebar now shows counts for Images, Screenshots, Clips and Links.
+- **Global hotkeys:** one hotkey taken by another app no longer disables all of them, because your previous hotkeys are kept. Conflicts between SnipClip's own shortcuts are caught before saving and name both actions. Combinations Windows relies on (Ctrl+C, Alt+F4, …) are blocked. There's a warning about NVIDIA's Alt+F10 / Alt+Z.
+- Search in the popup works again; it returned nothing since full-text search was added. Terms like `example.com` no longer error.
+- The recorder bar's Pause works, and the bar stays on screen at monitor edges and at high display scaling.
+- Recordings and clips now go to `Videos\SnipClip`. Older files keep working.
+- Faster library: the vault is smaller and lists faster (a 280 MB test vault shrank to 127 MB).
+- Long recordings can no longer stall, starting a recording no longer freezes the window, a copy made while another app held the clipboard is no longer lost, and the OCR model download recovers from interruptions.
+- Desktop audio no longer drifts ahead of the video after quiet stretches, and GIF recording no longer holds every frame in memory.
+
 ## [1.7.0] — 2026-10-03
 
 ### Paste engine
